@@ -18,7 +18,7 @@ import comparers = require('vs/base/common/comparers');
 import actions = require('vs/base/common/actions');
 import actionbar = require('vs/base/browser/ui/actionbar/actionbar');
 import countbadge = require('vs/base/browser/ui/countBadge/countBadge');
-import tree = require('vs/base/parts/tree/common/tree');
+import tree = require('vs/base/parts/tree/browser/tree');
 import treednd = require('vs/base/parts/tree/browser/treeDnd');
 import treedefaults = require('vs/base/parts/tree/browser/treeDefaults');
 import actionsrenderer = require('vs/base/parts/tree/browser/actionsRenderer');
@@ -232,7 +232,7 @@ export class Renderer implements tree.IRenderer {
 	}
 
 	public getHeight(tree:tree.ITree, element:any): number {
-		return 24;
+		return 22;
 	}
 
 	public getTemplateId(tree: tree.ITree, element: any): string {
@@ -269,7 +269,10 @@ export class Renderer implements tree.IRenderer {
 		data.actionBar = new actionbar.ActionBar(container, { actionRunner: this.actionRunner });
 		data.actionBar.push(this.actionProvider.getActionsForGroupStatusType(statusType), { icon: true, label: false });
 		data.actionBar.addListener2('run', e => e.error && this.onError(e.error));
-		data.count = new countbadge.CountBadge(container);
+
+		const wrapper = dom.append(container, $('.count-badge-wrapper'));
+		data.count = new countbadge.CountBadge(wrapper);
+
 		data.root = dom.append(container, $('.status-group'));
 
 		switch (statusType) {
@@ -397,7 +400,7 @@ export class Renderer implements tree.IRenderer {
 		}
 	}
 
-	private static statusToTitle(status: git.Status): string {
+	public static statusToTitle(status: git.Status): string {
 		switch (status) {
 			case git.Status.INDEX_MODIFIED:		return nls.localize('title-index-modified', "Modified in index");
 			case git.Status.MODIFIED:			return nls.localize('title-modified', "Modified");
@@ -642,6 +645,30 @@ export class DragAndDrop extends ActionContainer implements tree.IDragAndDrop {
 	}
 }
 
+export class AccessibilityProvider implements tree.IAccessibilityProvider {
+
+	public getAriaLabel(tree: tree.ITree, element: any): string {
+		if (element instanceof gitmodel.FileStatus) {
+			const fileStatus = <gitmodel.FileStatus>element;
+			const status = fileStatus.getStatus();
+			const path = fileStatus.getPath();
+			const lastSlashIndex = path.lastIndexOf('/');
+			const name = lastSlashIndex === -1 ? path : path.substr(lastSlashIndex + 1, path.length);
+			const folder = (lastSlashIndex === -1 ? '' : path.substr(0, lastSlashIndex));
+
+			return nls.localize('fileStatusAriaLabel', "File {0} in folder {1} has status: {2}", name, folder, Renderer.statusToTitle(status));
+		}
+
+		if (element instanceof gitmodel.StatusGroup) {
+			switch ( (<gitmodel.StatusGroup>element).getType()) {
+				case git.StatusType.INDEX: return nls.localize('ariaLabelStagedChanges', "Staged Changes");
+				case git.StatusType.WORKING_TREE: return nls.localize('ariaLabelChanges', "Changes");
+				case git.StatusType.MERGE: return nls.localize('ariaLabelMerge', "Merge");
+			}
+		}
+	}
+}
+
 export class Controller extends treedefaults.DefaultController {
 
 	private contextMenuService:IContextMenuService;
@@ -671,7 +698,7 @@ export class Controller extends treedefaults.DefaultController {
 		if (event.shiftKey) {
 			var focus = tree.getFocus();
 
-			if (!focus || focus instanceof gitmodel.StatusGroup) {
+			if (!(focus instanceof gitmodel.FileStatus) || !(element instanceof gitmodel.FileStatus)) {
 				return;
 			}
 

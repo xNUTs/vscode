@@ -7,12 +7,9 @@
 
 import {TPromise} from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
-import env = require('vs/base/common/flags');
 import {MainThreadService as CommonMainThreadService} from 'vs/platform/thread/common/mainThreadService';
 import pluginsIPC = require('vs/platform/plugins/common/ipcRemoteCom');
-import remote = require('vs/base/common/remote');
 import marshalling = require('vs/base/common/marshalling');
-import json = require('vs/base/common/json');
 import strings = require('vs/base/common/strings');
 import objects = require('vs/base/common/objects');
 import uri from 'vs/base/common/uri';
@@ -24,10 +21,13 @@ import {IWindowService} from 'vs/workbench/services/window/electron-browser/wind
 import ports = require('vs/base/node/ports');
 
 import cp = require('child_process');
-import ipc = require('ipc');
+import {ipcRenderer as ipc} from 'electron';
 
 export const PLUGIN_LOG_BROADCAST_CHANNEL = 'vscode:pluginLog';
 export const PLUGIN_ATTACH_BROADCAST_CHANNEL = 'vscode:pluginAttach';
+
+// The amd loader has the global scope assigned to this.
+const globalRequire = this.require;
 
 // Enable to see detailed message communication between window and plugin host
 const logPluginHostCommunication = false;
@@ -64,7 +64,7 @@ export class MainThreadService extends CommonMainThreadService {
 				console.log('%c[Plugin \u2192 Window]%c[len: ' + strings.pad(msg.length, 5, ' ') + ']', 'color: darkgreen', 'color: grey', JSON.parse(msg));
 			}
 
-			this.remoteCom.handle(msg)
+			this.remoteCom.handle(msg);
 		});
 
 		this.remoteCom.registerBigHandler(this);
@@ -113,6 +113,14 @@ class PluginHostProcessManager {
 		let opts: any = {
 			env: objects.mixin(objects.clone(process.env), { AMD_ENTRYPOINT: 'vs/workbench/node/pluginHostProcess', PIPE_LOGGING: 'true', VERBOSE_LOGGING: true })
 		};
+
+		// Make sure the nls configuration travels to the plugin host.
+		if (globalRequire && typeof globalRequire.getConfig === 'function') {
+			let nlsConfig = globalRequire.getConfig()['vs/nls'];
+			if (nlsConfig) {
+				opts.env['VSCODE_NLS_CONFIG'] = JSON.stringify(nlsConfig);
+			}
+		}
 
 		// Help in case we fail to start it
 		if (isDev) {

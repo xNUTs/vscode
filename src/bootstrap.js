@@ -3,6 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+// disable electron's asar support early on because bootstrap.js is used in forked processes
+// where the environment is purely node based. this will instruct electron to not treat files
+// with *.asar ending any special from normal files.
+process.noAsar = true;
+
 // Will be defined if we got forked from another node process
 // In that case we override console.log/warn/error to be able
 // to send loading issues to the main side for logging.
@@ -118,12 +123,23 @@ function uriFromPath(_path) {
 	return encodeURI('file://' + pathName);
 }
 
+var nlsConfig = undefined;
+if (process.env.VSCODE_NLS_CONFIG) {
+	nlsConfig = JSON.parse(process.env.VSCODE_NLS_CONFIG);
+}
+
 loader.config({
 	baseUrl: uriFromPath(path.join(__dirname)),
 	catchError: true,
 	nodeRequire: require,
-	nodeMain: __filename
+	nodeMain: __filename,
+	'vs/nls': nlsConfig || { availableLanguages: {} }
 });
+if (nlsConfig && nlsConfig.pseudo) {
+	loader(['vs/nls'], function(nlsPlugin) {
+		nlsPlugin.setPseudoTranslation(nlsConfig.pseudo);
+	});
+}
 
 var entrypoint = process.env.AMD_ENTRYPOINT;
 if (entrypoint) {

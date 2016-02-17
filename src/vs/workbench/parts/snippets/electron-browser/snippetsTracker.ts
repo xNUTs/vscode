@@ -19,8 +19,6 @@ import {IFileService} from 'vs/platform/files/common/files';
 import {ILifecycleService} from 'vs/platform/lifecycle/common/lifecycle';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 
-import remote = require('remote');
-import ipc = require('ipc');
 import fs = require('fs');
 
 export class SnippetsTracker implements workbenchExt.IWorkbenchContribution {
@@ -69,7 +67,7 @@ export class SnippetsTracker implements workbenchExt.IWorkbenchContribution {
 			// the path might not exist anymore, ignore this error and return
 		}
 
-		this.lifecycleService.onShutdown.add(this.dispose, this);
+		this.lifecycleService.onShutdown(this.dispose, this);
 	}
 
 	private scanUserSnippets() : winjs.Promise {

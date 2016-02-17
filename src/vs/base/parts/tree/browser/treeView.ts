@@ -15,14 +15,14 @@ import Diff = require('vs/base/common/diff/diff');
 import Touch = require('vs/base/browser/touch');
 import Mouse = require('vs/base/browser/mouseEvent');
 import Keyboard = require('vs/base/browser/keyboardEvent');
-import Model = require('vs/base/parts/tree/common/treeModel');
+import Model = require('vs/base/parts/tree/browser/treeModel');
 import dnd = require('./treeDnd');
 import { IIterator, ArrayIterator, MappedIterator } from 'vs/base/common/iterator';
 import Scroll = require('vs/base/browser/ui/scrollbar/scrollableElement');
 import ScrollableElementImpl = require('vs/base/browser/ui/scrollbar/impl/scrollableElement');
-import { HeightMap } from 'vs/base/parts/tree/common/treeViewModel'
-import _ = require('vs/base/parts/tree/common/tree');
-import { IViewItem } from 'vs/base/parts/tree/common/treeViewModel';
+import { HeightMap } from 'vs/base/parts/tree/browser/treeViewModel'
+import _ = require('vs/base/parts/tree/browser/tree');
+import { IViewItem } from 'vs/base/parts/tree/browser/treeViewModel';
 import {IScrollable} from 'vs/base/common/scrollable';
 import {KeyCode} from 'vs/base/common/keyCodes';
 
@@ -232,6 +232,32 @@ export class ViewItem implements IViewItem {
 		this.element.draggable = this.draggable;
 		this.element.style.height = this.height + 'px';
 
+		// ARIA
+		this.element.setAttribute('role', 'treeitem');
+		if (this.model.hasTrait('focused')) {
+			const base64Id = btoa(this.model.id);
+			const ariaLabel = this.context.accessibilityProvider.getAriaLabel(this.context.tree, this.model.getElement());
+
+			this.element.setAttribute('aria-selected', 'true');
+			this.element.setAttribute('id', base64Id);
+			if (ariaLabel) {
+				this.element.setAttribute('aria-label', ariaLabel);
+			} else {
+				this.element.setAttribute('aria-labelledby', base64Id); // force screen reader to compute label from children (helps NVDA at least)
+			}
+		} else {
+			this.element.setAttribute('aria-selected', 'false');
+			this.element.removeAttribute('id');
+			this.element.removeAttribute('aria-label');
+			this.element.removeAttribute('aria-labelledby');
+		}
+		if (this.model.hasChildren()) {
+			this.element.setAttribute('aria-expanded', String(this.model.isExpanded()));
+		} else {
+			this.element.removeAttribute('aria-expanded');
+		}
+		this.element.setAttribute('aria-level', String(this.model.getDepth()));
+
 		if (this.context.options.paddingOnRow) {
 			this.element.style.paddingLeft = this.context.options.twistiePixels + ((this.model.getDepth() - 1) * this.context.options.indentPixels) + 'px';
 		} else {
@@ -278,7 +304,12 @@ export class ViewItem implements IViewItem {
 		if (afterElement === null) {
 			container.appendChild(this.element);
 		} else {
-			container.insertBefore(this.element, afterElement);
+			try {
+				container.insertBefore(this.element, afterElement);
+			} catch (e) {
+				console.warn('Failed to locate previous tree element');
+				container.appendChild(this.element);
+			}
 		}
 
 		this.render();
@@ -385,9 +416,6 @@ export class TreeView extends HeightMap implements IScrollable {
 	private lastPointerType:string;
 	private lastClickTimeStamp: number = 0;
 
-	private fakeRow: HTMLElement;
-	private fakeContent: HTMLElement;
-
 	private _viewHeight: number;
 	private renderTop: number;
 	private renderHeight: number;
@@ -427,6 +455,7 @@ export class TreeView extends HeightMap implements IScrollable {
 			filter: context.filter,
 			sorter: context.sorter,
 			tree: context.tree,
+			accessibilityProvider: context.accessibilityProvider,
 			options: context.options,
 			cache: new RowCache(context)
 		};
@@ -441,6 +470,12 @@ export class TreeView extends HeightMap implements IScrollable {
 		this.domNode = document.createElement('div');
 		this.domNode.className = 'monaco-tree';
 		this.domNode.tabIndex = 0;
+
+		// ARIA
+		this.domNode.setAttribute('role', 'tree');
+		if (this.context.options.ariaLabel) {
+			this.domNode.setAttribute('aria-label', this.context.options.ariaLabel);
+		}
 
 		if (this.context.options.alwaysFocused) {
 			DOM.addClass(this.domNode, 'focused');
@@ -474,15 +509,6 @@ export class TreeView extends HeightMap implements IScrollable {
 
 		this.rowsContainer = document.createElement('div');
 		this.rowsContainer.className = 'monaco-tree-rows';
-
-		this.fakeRow = document.createElement('div');
-		this.fakeRow.className = 'monaco-tree-row fake';
-
-		this.fakeContent = document.createElement('div');
-		this.fakeContent.className = 'content';
-
-		this.fakeRow.appendChild(this.fakeContent);
-		this.rowsContainer.appendChild(this.fakeRow);
 
 		var focusTracker = DOM.trackFocus(this.domNode);
 		focusTracker.addFocusListener((e: FocusEvent) => this.onFocus(e));
@@ -700,6 +726,9 @@ export class TreeView extends HeightMap implements IScrollable {
 				case 'item:removeTrait':
 					this.onItemRemoveTrait(data);
 					break;
+				case 'focus':
+					this.onModelFocusChange();
+					break;
 			}
 		}
 
@@ -724,10 +753,6 @@ export class TreeView extends HeightMap implements IScrollable {
 
 		this.scrollTop = scrollTop;
 		this.scrollableElement.onElementInternalDimensions();
-	}
-
-	public withFakeRow(fn:(container:HTMLElement)=>any):any {
-		return fn(this.fakeContent);
 	}
 
 	public focusNextPage(eventPayload?:any): void {
@@ -906,53 +931,61 @@ export class TreeView extends HeightMap implements IScrollable {
 				afterModelItems.push(childItem);
 			}
 
-			var lcs = new Diff.LcsDiff({
-				getLength: () => previousChildrenIds.length,
-				getElementHash: (i:number) => previousChildrenIds[i]
-			}, {
-				getLength: () => afterModelItems.length,
-				getElementHash: (i:number) => afterModelItems[i].id
-			}, null);
+			let skipDiff = Math.abs(previousChildrenIds.length - afterModelItems.length) > 1000;
+			let diff: Diff.IDiffChange[];
+			let doToInsertItemsAlreadyExist: boolean;
 
-			var diff = lcs.ComputeDiff();
+			if (!skipDiff) {
+				const lcs = new Diff.LcsDiff({
+					getLength: () => previousChildrenIds.length,
+					getElementHash: (i:number) => previousChildrenIds[i]
+				}, {
+					getLength: () => afterModelItems.length,
+					getElementHash: (i:number) => afterModelItems[i].id
+				}, null);
 
-			// this means that the result of the diff algorithm would result
-			// in inserting items that were already registered. this can only
-			// happen if the data provider returns bad ids OR if the sorting
-			// of the elements has changed
-			var doToInsertItemsAlreadyExist = diff.some(d => {
-				if (d.modifiedLength > 0) {
-					for (var i = d.modifiedStart, len = d.modifiedStart + d.modifiedLength; i < len; i++) {
-						if (this.items.hasOwnProperty(afterModelItems[i].id)) {
-							return true;
+				diff = lcs.ComputeDiff();
+
+				// this means that the result of the diff algorithm would result
+				// in inserting items that were already registered. this can only
+				// happen if the data provider returns bad ids OR if the sorting
+				// of the elements has changed
+				doToInsertItemsAlreadyExist = diff.some(d => {
+					if (d.modifiedLength > 0) {
+						for (var i = d.modifiedStart, len = d.modifiedStart + d.modifiedLength; i < len; i++) {
+							if (this.items.hasOwnProperty(afterModelItems[i].id)) {
+								return true;
+							}
 						}
 					}
-				}
-				return false;
-			});
+					return false;
+				});
+			}
 
-			if (!doToInsertItemsAlreadyExist) {
-				for (var i = 0, len = diff.length; i < len; i++) {
-					var diffChange = diff[i];
+			// 50 is an optimization number, at some point we're better off
+			// just replacing everything
+			if (!skipDiff && !doToInsertItemsAlreadyExist && diff.length < 50) {
+				for (let i = 0, len = diff.length; i < len; i++) {
+					const diffChange = diff[i];
 
 					if (diffChange.originalLength > 0) {
 						this.onRemoveItems(new ArrayIterator(previousChildrenIds, diffChange.originalStart, diffChange.originalStart + diffChange.originalLength));
 					}
 
 					if (diffChange.modifiedLength > 0) {
-						var beforeItem = afterModelItems[diffChange.modifiedStart - 1] || item;
+						let beforeItem = afterModelItems[diffChange.modifiedStart - 1] || item;
 						beforeItem = beforeItem.getDepth() > 0 ? beforeItem : null;
 
 						this.onInsertItems(new ArrayIterator(afterModelItems, diffChange.modifiedStart, diffChange.modifiedStart + diffChange.modifiedLength), beforeItem ? beforeItem.id : null);
 					}
 				}
 
-			} else if (diff.length) {
+			} else if (skipDiff || diff.length) {
 				this.onRemoveItems(new ArrayIterator(previousChildrenIds));
 				this.onInsertItems(new ArrayIterator(afterModelItems));
 			}
 
-			if (diff.length) {
+			if (skipDiff || diff.length) {
 				this.onRowsChanged();
 			}
 		}
@@ -1057,6 +1090,19 @@ export class TreeView extends HeightMap implements IScrollable {
 				viewItem.draggable = true;
 			}
 			delete this.highlightedItemWasDraggable;
+		}
+	}
+
+	private onModelFocusChange(): void {
+		const focus = this.model && this.model.getFocus();
+
+		DOM.toggleClass(this.domNode, 'no-item-focus', !focus);
+
+		// ARIA
+		if (focus) {
+			this.domNode.setAttribute('aria-activedescendant', btoa(this.context.dataSource.getId(this.context.tree, focus)));
+		} else {
+			this.domNode.removeAttribute('aria-activedescendant');
 		}
 	}
 
@@ -1506,6 +1552,8 @@ export class TreeView extends HeightMap implements IScrollable {
 		if (!this.context.options.alwaysFocused) {
 			DOM.removeClass(this.domNode, 'focused');
 		}
+
+		this.domNode.removeAttribute('aria-activedescendant'); // ARIA
 	}
 
 	// MS specific DOM Events

@@ -4,21 +4,23 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import WinJS = require('vs/base/common/winjs.base');
-import Types = require('vs/base/common/types');
+import {TPromise} from 'vs/base/common/winjs.base';
+import types = require('vs/base/common/types');
 import URI from 'vs/base/common/uri';
-import Tree = require('vs/base/parts/tree/common/tree');
-import Filters = require('vs/base/common/filters');
-import Strings = require('vs/base/common/strings');
-import Paths = require('vs/base/common/paths');
-import {IQuickNavigateConfiguration, IModel, IDataSource, IFilter, IRenderer, IRunner, Mode} from './quickOpen';
-import ActionsRenderer = require('vs/base/parts/tree/browser/actionsRenderer');
-import Actions = require('vs/base/common/actions');
-import {compareAnything} from 'vs/base/common/comparers';
-import ActionBar = require('vs/base/browser/ui/actionbar/actionbar');
-import TreeDefaults = require('vs/base/parts/tree/browser/treeDefaults');
-import HighlightedLabel = require('vs/base/browser/ui/highlightedlabel/highlightedLabel');
+import {ITree, IElementCallback} from 'vs/base/parts/tree/browser/tree';
+import filters = require('vs/base/common/filters');
+import strings = require('vs/base/common/strings');
+import paths = require('vs/base/common/paths');
+import {IQuickNavigateConfiguration, IModel, IDataSource, IFilter, IAccessiblityProvider, IRenderer, IRunner, Mode} from 'vs/base/parts/quickopen/common/quickOpen';
+import {IActionProvider} from 'vs/base/parts/tree/browser/actionsRenderer';
+import {Action, IAction, IActionRunner} from 'vs/base/common/actions';
+import {compareAnything, compareByPrefix} from 'vs/base/common/comparers';
+import {ActionBar, IActionItem} from 'vs/base/browser/ui/actionbar/actionbar';
+import {LegacyRenderer, ILegacyTemplateData} from 'vs/base/parts/tree/browser/treeDefaults';
+import {HighlightedLabel} from 'vs/base/browser/ui/highlightedlabel/highlightedLabel';
+import {OcticonLabel} from 'vs/base/browser/ui/octiconLabel/octiconLabel';
 import DOM = require('vs/base/browser/dom');
+import scorer = require('vs/base/common/scorer');
 
 export interface IContext {
 	event: any;
@@ -36,6 +38,7 @@ export class QuickOpenEntry {
 	private id: string;
 	private labelHighlights: IHighlight[];
 	private descriptionHighlights: IHighlight[];
+	private detailHighlights: IHighlight[];
 	private hidden: boolean;
 	private labelPrefix: string;
 
@@ -67,9 +70,9 @@ export class QuickOpenEntry {
 	}
 
 	/**
-	 * Meta information about the entry that is optional and can be shown to the right of the label
+	 * Detail information about the entry that is optional and can be shown below the label
 	 */
-	public getMeta(): string {
+	public getDetail(): string {
 		return null;
 	}
 
@@ -119,16 +122,17 @@ export class QuickOpenEntry {
 	/**
 	 * Allows to set highlight ranges that should show up for the entry label and optionally description if set.
 	 */
-	public setHighlights(labelHighlights: IHighlight[], descriptionHighlights?: IHighlight[]): void {
+	public setHighlights(labelHighlights: IHighlight[], descriptionHighlights?: IHighlight[], detailHighlights?: IHighlight[]): void {
 		this.labelHighlights = labelHighlights;
 		this.descriptionHighlights = descriptionHighlights;
+		this.detailHighlights = detailHighlights;
 	}
 
 	/**
 	 * Allows to return highlight ranges that should show up for the entry label and description.
 	 */
-	public getHighlights(): [IHighlight[] /* Label */, IHighlight[] /* Description */] {
-		return [this.labelHighlights, this.descriptionHighlights];
+	public getHighlights(): [IHighlight[] /* Label */, IHighlight[] /* Description */, IHighlight[] /* Detail */] {
+		return [this.labelHighlights, this.descriptionHighlights, this.detailHighlights];
 	}
 
 	/**
@@ -149,7 +153,7 @@ export class QuickOpenEntry {
 
 		// Normalize
 		if (lookFor) {
-			lookFor = Strings.stripWildcards(lookFor).toLowerCase();
+			lookFor = strings.stripWildcards(lookFor).toLowerCase();
 		}
 
 		// Give matches with label highlights higher priority over
@@ -170,12 +174,67 @@ export class QuickOpenEntry {
 			let resourceB = elementB.getResource();
 
 			if (resourceA && resourceB) {
-				nameA = elementA.getResource().fsPath;
-				nameB = elementB.getResource().fsPath;
+				nameA = resourceA.fsPath;
+				nameB = resourceB.fsPath;
 			}
 		}
 
 		return compareAnything(nameA, nameB, lookFor);
+	}
+
+	public static compareByScore(elementA: QuickOpenEntry, elementB: QuickOpenEntry, lookFor: string, lookForNormalizedLower: string, scorerCache?: { [key: string]: number }): number {
+		const labelA = elementA.getLabel();
+		const labelB = elementB.getLabel();
+
+		// treat prefix matches highest in any case
+		const prefixCompare = compareByPrefix(labelA, labelB, lookFor);
+		if (prefixCompare) {
+			return prefixCompare;
+		}
+
+		// Give higher importance to label score
+		const labelAScore = scorer.score(labelA, lookFor, scorerCache);
+		const labelBScore = scorer.score(labelB, lookFor, scorerCache);
+
+		// Useful for understanding the scoring
+		// elementA.setPrefix(labelAScore + ' ');
+		// elementB.setPrefix(labelBScore + ' ');
+
+		if (labelAScore !== labelBScore) {
+			return labelAScore > labelBScore ? -1 : 1;
+		}
+
+		// Score on full resource path comes next (if available)
+		let resourceA = elementA.getResource();
+		let resourceB = elementB.getResource();
+		if (resourceA && resourceB) {
+			const resourceAScore = scorer.score(resourceA.fsPath, lookFor, scorerCache);
+			const resourceBScore = scorer.score(resourceB.fsPath, lookFor, scorerCache);
+
+			// Useful for understanding the scoring
+			// elementA.setPrefix(elementA.getPrefix() + ' ' + resourceAScore + ': ');
+			// elementB.setPrefix(elementB.getPrefix() + ' ' + resourceBScore + ': ');
+
+			if (resourceAScore !== resourceBScore) {
+				return resourceAScore > resourceBScore ? -1 : 1;
+			}
+		}
+
+		// At this place, the scores are identical so we check for string lengths and favor shorter ones
+		if (labelA.length !== labelB.length) {
+			return labelA.length < labelB.length ? -1 : 1;
+		}
+
+		if (resourceA && resourceB && resourceA.fsPath.length !== resourceB.fsPath.length) {
+			return resourceA.fsPath.length < resourceB.fsPath.length ? -1 : 1;
+		}
+
+		// Finally compare by label or resource path
+		if (labelA === labelB && resourceA && resourceB) {
+			return compareAnything(resourceA.fsPath, resourceB.fsPath, lookForNormalizedLower);
+		}
+
+		return compareAnything(labelA, labelB, lookForNormalizedLower);
 	}
 
 	/**
@@ -185,26 +244,44 @@ export class QuickOpenEntry {
 		let labelHighlights: IHighlight[] = [];
 		let descriptionHighlights: IHighlight[] = [];
 
+		const label = entry.getLabel();
+		const description = entry.getDescription();
+
 		// Highlight file aware
 		if (entry.getResource()) {
 
-			// Fuzzy: Highlight is special
-			if (fuzzyHighlight) {
-				let candidateLabelHighlights = Filters.matchesFuzzy(lookFor, entry.getLabel(), true);
+			// Highlight entire label and description if searching for full absolute path
+			if (lookFor.toLowerCase() === entry.getResource().fsPath.toLowerCase()) {
+				labelHighlights.push({ start: 0, end: label.length });
+				descriptionHighlights.push({ start: 0, end: description.length });
+			}
+
+			// Fuzzy/Full-Path: Highlight is special
+			else if (fuzzyHighlight || lookFor.indexOf(paths.nativeSep) >= 0) {
+				let candidateLabelHighlights = filters.matchesFuzzy(lookFor, label, fuzzyHighlight);
 				if (!candidateLabelHighlights) {
-					const pathPrefix = entry.getDescription() ? (entry.getDescription() + Paths.nativeSep) : '';
+					const pathPrefix = description ? (description + paths.nativeSep) : '';
 					const pathPrefixLength = pathPrefix.length;
 
 					// If there are no highlights in the label, build a path out of description and highlight and match on both,
 					// then extract the individual label and description highlights back to the original positions
-					let pathHighlights = Filters.matchesFuzzy(lookFor, pathPrefix + entry.getLabel(), true);
+					let pathHighlights = filters.matchesFuzzy(lookFor, pathPrefix + label, fuzzyHighlight);
 					if (pathHighlights) {
 						pathHighlights.forEach(h => {
-							if (h.start >= pathPrefixLength) {
-								h.start -= (pathPrefixLength);
-								h.end -= (pathPrefixLength);
-								labelHighlights.push(h);
-							} else {
+
+							// Match overlaps label and description part, we need to split it up
+							if (h.start < pathPrefixLength && h.end > pathPrefixLength) {
+								labelHighlights.push({ start: 0, end: h.end - pathPrefixLength });
+								descriptionHighlights.push({ start: h.start, end: pathPrefixLength });
+							}
+
+							// Match on label part
+							else if (h.start >= pathPrefixLength) {
+								labelHighlights.push({ start: h.start - pathPrefixLength, end: h.end - pathPrefixLength });
+							}
+
+							// Match on description part
+							else {
 								descriptionHighlights.push(h);
 							}
 						});
@@ -214,26 +291,15 @@ export class QuickOpenEntry {
 				}
 			}
 
-			// Path search: Highlight in label and description
-			else if (lookFor.indexOf(Paths.nativeSep) >= 0) {
-				descriptionHighlights = Filters.matchesFuzzy(Strings.trim(lookFor, Paths.nativeSep), entry.getDescription());
-
-				// If we have no highlights, assume that the match is split among name and parent folder
-				if (!descriptionHighlights || !descriptionHighlights.length) {
-					labelHighlights = Filters.matchesFuzzy(Paths.basename(lookFor), entry.getLabel());
-					descriptionHighlights = Filters.matchesFuzzy(Strings.trim(Paths.dirname(lookFor), Paths.nativeSep), entry.getDescription());
-				}
-			}
-
 			// Highlight only inside label
 			else {
-				labelHighlights = Filters.matchesFuzzy(lookFor, entry.getLabel());
+				labelHighlights = filters.matchesFuzzy(lookFor, label);
 			}
 		}
 
 		// Highlight by label otherwise
 		else {
-			labelHighlights = Filters.matchesFuzzy(lookFor, entry.getLabel());
+			labelHighlights = filters.matchesFuzzy(lookFor, label);
 		}
 
 		return { labelHighlights, descriptionHighlights };
@@ -252,7 +318,7 @@ export class QuickOpenEntryItem extends QuickOpenEntry {
 	/**
 	 * Allows to present the quick open entry in a custom way inside the tree.
 	 */
-	public render(tree: Tree.ITree, container: HTMLElement, previousCleanupFn: Tree.IElementCallback): Tree.IElementCallback {
+	public render(tree: ITree, container: HTMLElement, previousCleanupFn: IElementCallback): IElementCallback {
 		return null;
 	}
 }
@@ -300,8 +366,8 @@ export class QuickOpenEntryGroup extends QuickOpenEntry {
 		return this.entry ? this.entry.getLabel() : super.getLabel();
 	}
 
-	public getMeta(): string {
-		return this.entry ? this.entry.getMeta() : super.getMeta();
+	public getDetail(): string {
+		return this.entry ? this.entry.getDetail() : super.getDetail();
 	}
 
 	public getResource(): URI {
@@ -320,7 +386,7 @@ export class QuickOpenEntryGroup extends QuickOpenEntry {
 		return this.entry;
 	}
 
-	public getHighlights(): [IHighlight[], IHighlight[]] {
+	public getHighlights(): [IHighlight[], IHighlight[], IHighlight[]] {
 		return this.entry ? this.entry.getHighlights() : super.getHighlights();
 	}
 
@@ -345,13 +411,13 @@ const templateEntry = 'quickOpenEntry';
 const templateEntryGroup = 'quickOpenEntryGroup';
 const templateEntryItem = 'quickOpenEntryItem';
 
-class EntryItemRenderer extends TreeDefaults.LegacyRenderer {
+class EntryItemRenderer extends LegacyRenderer {
 
-	public getTemplateId(tree: Tree.ITree, element: any): string {
+	public getTemplateId(tree: ITree, element: any): string {
 		return templateEntryItem;
 	}
 
-	protected render(tree: Tree.ITree, element: any, container: HTMLElement, previousCleanupFn?: Tree.IElementCallback): Tree.IElementCallback {
+	protected render(tree: ITree, element: any, container: HTMLElement, previousCleanupFn?: IElementCallback): IElementCallback {
 		if (element instanceof QuickOpenEntryItem) {
 			return (<QuickOpenEntryItem>element).render(tree, container, previousCleanupFn);
 		}
@@ -360,25 +426,25 @@ class EntryItemRenderer extends TreeDefaults.LegacyRenderer {
 	}
 }
 
-class NoActionProvider implements ActionsRenderer.IActionProvider {
+class NoActionProvider implements IActionProvider {
 
-	public hasActions(tree: Tree.ITree, element: any): boolean {
+	public hasActions(tree: ITree, element: any): boolean {
 		return false;
 	}
 
-	public getActions(tree: Tree.ITree, element: any): WinJS.TPromise<Actions.IAction[]> {
-		return WinJS.Promise.as(null);
+	public getActions(tree: ITree, element: any): TPromise<IAction[]> {
+		return TPromise.as(null);
 	}
 
-	public hasSecondaryActions(tree: Tree.ITree, element: any): boolean {
+	public hasSecondaryActions(tree: ITree, element: any): boolean {
 		return false;
 	}
 
-	public getSecondaryActions(tree: Tree.ITree, element: any): WinJS.TPromise<Actions.IAction[]> {
-		return WinJS.Promise.as(null);
+	public getSecondaryActions(tree: ITree, element: any): TPromise<IAction[]> {
+		return TPromise.as(null);
 	}
 
-	public getActionItem(tree: Tree.ITree, element: any, action: Actions.Action): ActionBar.IActionItem {
+	public getActionItem(tree: ITree, element: any, action: Action): IActionItem {
 		return null;
 	}
 }
@@ -387,10 +453,10 @@ export interface IQuickOpenEntryTemplateData {
 	container: HTMLElement;
 	icon: HTMLSpanElement;
 	prefix: HTMLSpanElement;
-	label: HighlightedLabel.HighlightedLabel;
-	meta: HTMLSpanElement;
-	description: HighlightedLabel.HighlightedLabel;
-	actionBar: ActionBar.ActionBar;
+	label: HighlightedLabel;
+	detail: HighlightedLabel;
+	description: HighlightedLabel;
+	actionBar: ActionBar;
 }
 
 export interface IQuickOpenEntryGroupTemplateData extends IQuickOpenEntryTemplateData {
@@ -399,11 +465,11 @@ export interface IQuickOpenEntryGroupTemplateData extends IQuickOpenEntryTemplat
 
 class Renderer implements IRenderer<QuickOpenEntry> {
 
-	private actionProvider: ActionsRenderer.IActionProvider;
-	private actionRunner: Actions.IActionRunner;
+	private actionProvider: IActionProvider;
+	private actionRunner: IActionRunner;
 	private entryItemRenderer: EntryItemRenderer;
 
-	constructor(actionProvider: ActionsRenderer.IActionProvider = new NoActionProvider(), actionRunner: Actions.IActionRunner = null) {
+	constructor(actionProvider: IActionProvider = new NoActionProvider(), actionRunner: IActionRunner = null) {
 		this.actionProvider = actionProvider;
 		this.actionRunner = actionRunner;
 		this.entryItemRenderer = new EntryItemRenderer();
@@ -413,8 +479,10 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 		if (entry instanceof QuickOpenEntryItem) {
 			return (<QuickOpenEntryItem>entry).getHeight();
 		}
-
-		return 24;
+		if (entry.getDetail()) {
+			return 44;
+		}
+		return 22;
 	}
 
 	public getTemplateId(entry: QuickOpenEntry): string {
@@ -455,7 +523,7 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 		DOM.addClass(actionBarContainer, 'primary-action-bar');
 		container.appendChild(actionBarContainer);
 
-		let actionBar = new ActionBar.ActionBar(actionBarContainer, {
+		let actionBar = new ActionBar(actionBarContainer, {
 			actionRunner: this.actionRunner
 		});
 
@@ -473,28 +541,29 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 		entry.appendChild(prefix);
 
 		// Label
-		let label = new HighlightedLabel.HighlightedLabel(entry);
-
-		// Meta
-		let meta = document.createElement('span');
-		entry.appendChild(meta);
-		DOM.addClass(meta, 'quick-open-entry-meta');
+		let label = new HighlightedLabel(entry);
 
 		// Description
 		let descriptionContainer = document.createElement('span');
 		entry.appendChild(descriptionContainer);
 		DOM.addClass(descriptionContainer, 'quick-open-entry-description');
-		let description = new HighlightedLabel.HighlightedLabel(descriptionContainer);
+		let description = new HighlightedLabel(descriptionContainer);
+
+		// Detail
+		let detailContainer = document.createElement('div');
+		entry.appendChild(detailContainer);
+		DOM.addClass(detailContainer, 'quick-open-entry-meta');
+		let detail = new HighlightedLabel(detailContainer);
 
 		return {
-			container: container,
-			icon: icon,
-			prefix: prefix,
-			label: label,
-			meta: meta,
-			description: description,
-			group: group,
-			actionBar: actionBar
+			container,
+			icon,
+			prefix,
+			label,
+			detail,
+			description,
+			group,
+			actionBar
 		};
 	}
 
@@ -502,7 +571,7 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 
 		// Entry Item
 		if (templateId === templateEntryItem) {
-			this.entryItemRenderer.renderElement(null, entry, templateId, <TreeDefaults.ILegacyTemplateData>templateData);
+			this.entryItemRenderer.renderElement(null, entry, templateId, <ILegacyTemplateData>templateData);
 			return;
 		}
 
@@ -545,7 +614,7 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 
 		// Normal Entry
 		if (entry instanceof QuickOpenEntry) {
-			let highlights = entry.getHighlights();
+			let [labelHighlights, descriptionHighlights, detailHighlights] = entry.getHighlights();
 
 			// Icon
 			let iconClass = entry.getIcon() ? ('quick-open-entry-icon ' + entry.getIcon()) : '';
@@ -555,16 +624,14 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 			let prefix = entry.getPrefix() || '';
 			data.prefix.textContent = prefix;
 
-			let labelHighlights = highlights[0];
-			data.label.set(entry.getLabel() || '', labelHighlights || []);
+			// Label
+			data.label.set(entry.getLabel(), labelHighlights || []);
 
 			// Meta
-			let metaLabel = entry.getMeta() || '';
-			data.meta.textContent = metaLabel;
+			data.detail.set(entry.getDetail(), detailHighlights);
 
 			// Description
-			let descriptionHighlights = highlights[1];
-			data.description.set(entry.getDescription() || '', descriptionHighlights || []);
+			data.description.set(entry.getDescription(), descriptionHighlights || []);
 		}
 	}
 
@@ -587,13 +654,15 @@ export class QuickOpenModel implements
 	private _renderer: IRenderer<QuickOpenEntry>;
 	private _filter: IFilter<QuickOpenEntry>;
 	private _runner: IRunner<QuickOpenEntry>;
+	private _accessibilityProvider: IAccessiblityProvider<QuickOpenEntry>;
 
-	constructor(entries: QuickOpenEntry[] = [], actionProvider: ActionsRenderer.IActionProvider = new NoActionProvider()) {
+	constructor(entries: QuickOpenEntry[] = [], actionProvider: IActionProvider = new NoActionProvider()) {
 		this._entries = entries;
 		this._dataSource = this;
 		this._renderer = new Renderer(actionProvider);
 		this._filter = this;
 		this._runner = this;
+		this._accessibilityProvider = this;
 	}
 
 	public get entries() { return this._entries; }
@@ -601,6 +670,7 @@ export class QuickOpenModel implements
 	public get renderer() { return this._renderer; }
 	public get filter() { return this._filter; }
 	public get runner() { return this._runner; }
+	public get accessibilityProvider() { return this._accessibilityProvider; }
 
 	public set entries(entries: QuickOpenEntry[]) {
 		this._entries = entries;
@@ -610,7 +680,7 @@ export class QuickOpenModel implements
 	 * Adds entries that should show up in the quick open viewer.
 	 */
 	public addEntries(entries: QuickOpenEntry[]): void {
-		if (Types.isArray(entries)) {
+		if (types.isArray(entries)) {
 			this._entries = this._entries.concat(entries);
 		}
 	}
@@ -619,7 +689,7 @@ export class QuickOpenModel implements
 	 * Set the entries that should show up in the quick open viewer.
 	 */
 	public setEntries(entries: QuickOpenEntry[]): void {
-		if (Types.isArray(entries)) {
+		if (types.isArray(entries)) {
 			this._entries = entries;
 		}
 	}
@@ -642,6 +712,10 @@ export class QuickOpenModel implements
 	}
 
 	getLabel(entry: QuickOpenEntry): string {
+		return entry.getLabel();
+	}
+
+	getAriaLabel(entry: QuickOpenEntry): string {
 		return entry.getLabel();
 	}
 

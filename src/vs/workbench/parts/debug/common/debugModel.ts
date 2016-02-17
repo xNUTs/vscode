@@ -16,8 +16,8 @@ import debug = require('vs/workbench/parts/debug/common/debug');
 import { Source } from 'vs/workbench/parts/debug/common/debugSource';
 
 function resolveChildren(debugService: debug.IDebugService, parent: debug.IExpressionContainer): TPromise<Variable[]> {
-	var session = debugService.getActiveSession();
-	// Only variables with reference > 0 have children.
+	const session = debugService.getActiveSession();
+	// only variables with reference > 0 have children.
 	if (!session || parent.reference <= 0) {
 		return TPromise.as([]);
 	}
@@ -26,17 +26,20 @@ function resolveChildren(debugService: debug.IDebugService, parent: debug.IExpre
 		return arrays.distinct(response.body.variables, v => v.name).map(
 			v => new Variable(parent, v.variablesReference, v.name, v.value)
 		);
-	}, (e: Error) => [new Variable(parent, 0, null, e.message)]);
+	}, (e: Error) => [new Variable(parent, 0, null, e.message, false)]);
 }
 
 function massageValue(value: string): string {
 	return value ? value.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t') : value;
 }
 
+const notPropertySyntax = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const arrayElementSyntax = /\[.*\]$/;
+
 export function getFullExpressionName(expression: debug.IExpression, sessionType: string): string {
 	let names = [expression.name];
 	if (expression instanceof Variable) {
-		var v = (<Variable> expression).parent;
+		let v = (<Variable> expression).parent;
 		while (v instanceof Variable || v instanceof Expression) {
 			names.push((<Variable> v).name);
 			v = (<Variable> v).parent;
@@ -45,12 +48,11 @@ export function getFullExpressionName(expression: debug.IExpression, sessionType
 	names = names.reverse();
 
 	let result = null;
-	const propertySyntax = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 	names.forEach(name => {
 		if (!result) {
 			result = name;
-		} else if (sessionType === 'node' && !propertySyntax.test(name)) {
-			// Use safe way to access node properties a['property_name']. Also handles array elements.
+		} else if (arrayElementSyntax.test(name) || (sessionType === 'node' && !notPropertySyntax.test(name))) {
+			// use safe way to access node properties a['property_name']. Also handles array elements.
 			result = name && name.indexOf('[') === 0 ? `${ result }${ name }` : `${ result }['${ name }']`;
 		} else {
 			result = `${ result }.${ name }`;
@@ -62,10 +64,10 @@ export function getFullExpressionName(expression: debug.IExpression, sessionType
 
 export class Thread implements debug.IThread {
 
-	public exception: boolean;
+	public stoppedReason: string;
 
 	constructor(public name: string, public threadId, public callStack: debug.IStackFrame[]) {
-		this.exception = false;
+		this.stoppedReason = undefined;
 	}
 
 	public getId(): string {
@@ -143,11 +145,14 @@ export class KeyValueOutputElement extends OutputElement {
 	}
 }
 
+// TODO@Isidor move common code for expression and variable into a super class
 export class Expression implements debug.IExpression {
 	static DEFAULT_VALUE = 'not available';
+	public static allValues: { [id: string]: string } = {};
 
 	public reference: number;
 	public available: boolean;
+	public valueChanged: boolean;
 	private _value: string;
 	private children: TPromise<debug.IExpression[]>;
 
@@ -164,6 +169,8 @@ export class Expression implements debug.IExpression {
 
 	public set value(value: string) {
 		this._value = massageValue(value);
+		this.valueChanged = Expression.allValues[this.getId()] && Expression.allValues[this.getId()] !== Expression.DEFAULT_VALUE && Expression.allValues[this.getId()] !== value;
+		Expression.allValues[this.getId()] = value;
 	}
 
 	public getId(): string {
@@ -184,13 +191,17 @@ export class Expression implements debug.IExpression {
 
 export class Variable implements debug.IExpression {
 
-	// Cache children to optimize debug hover behaviour.
+	public static allValues: { [id: string]: string } = {};
+	// cache children to optimize debug hover behaviour.
 	private children: TPromise<debug.IExpression[]>;
 	public value: string;
+	public valueChanged: boolean;
 
-	constructor(public parent: debug.IExpressionContainer, public reference: number, public name: string, value: string) {
+	constructor(public parent: debug.IExpressionContainer, public reference: number, public name: string, value: string, public available = true) {
 		this.children = null;
 		this.value = massageValue(value);
+		this.valueChanged = Variable.allValues[this.getId()] && Variable.allValues[this.getId()] !== value;
+		Variable.allValues[this.getId()] = value;
 	}
 
 	public getId(): string {
@@ -329,16 +340,18 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 				delete this.threads[reference];
 			} else {
 				this.threads[reference].callStack = [];
-				this.threads[reference].exception = false;
+				this.threads[reference].stoppedReason = undefined;
 			}
 		} else {
 			if (removeThreads) {
 				this.threads = {};
+				Variable.allValues = {};
+				Expression.allValues = {};
 			} else {
-				for (var ref in this.threads) {
+				for (let ref in this.threads) {
 					if (this.threads.hasOwnProperty(ref)) {
 						this.threads[ref].callStack = [];
-						this.threads[ref].exception = false;
+						this.threads[ref].stoppedReason = undefined;
 					}
 				}
 			}
@@ -369,7 +382,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 	}
 
 	public addBreakpoints(rawData: debug.IRawBreakpoint[]): void {
-		this.breakpoints = this.breakpoints.concat(rawData.map(rawBp => new Breakpoint(Source.fromUri(rawBp.uri), rawBp.lineNumber, rawBp.enabled, rawBp.condition)));
+		this.breakpoints = this.breakpoints.concat(rawData.map(rawBp => new Breakpoint(new Source(Source.toRawSource(rawBp.uri, this)), rawBp.lineNumber, rawBp.enabled, rawBp.condition)));
 		this.breakpointsActivated = true;
 		this.emit(debug.ModelEvents.BREAKPOINTS_UPDATED);
 	}
@@ -438,7 +451,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 	}
 
 	public addReplExpression(session: debug.IRawDebugSession, stackFrame: debug.IStackFrame, name: string): Promise {
-		var expression = new Expression(name, true);
+		const expression = new Expression(name, true);
 		this.replElements.push(expression);
 		return this.evaluateExpression(session, stackFrame, expression, true).then(() =>
 			this.emit(debug.ModelEvents.REPL_ELEMENTS_UPDATED, expression)
@@ -452,7 +465,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 		let previousOutput = this.replElements.length && (<ValueOutputElement>this.replElements[this.replElements.length - 1]);
 		let groupTogether = !!previousOutput && severity === previousOutput.severity;
 
-		// String message
+		// string message
 		if (typeof value === 'string') {
 			if (value && value.trim() && previousOutput && previousOutput.value === value && previousOutput.severity === severity) {
 				previousOutput.counter++; // we got the same output (but not an empty string when trimmed) so we just increment the counter
@@ -464,7 +477,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 			}
 		}
 
-		// Key-Value output
+		// key-value output
 		else {
 			elements.push(new KeyValueOutputElement(value.prototype, value, nls.localize('snapshotObj', "Only primitive values are shown for this object."), groupTogether));
 		}
@@ -476,7 +489,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 	}
 
 	public appendReplOutput(value: string, severity?: severity): void {
-		var elements:OutputElement[] = [];
+		const elements: OutputElement[] = [];
 		let previousOutput = this.replElements.length && (<ValueOutputElement>this.replElements[this.replElements.length - 1]);
 		let lines = value.split('\n');
 		let groupTogether = !!previousOutput && previousOutput.category === 'output' && severity === previousOutput.severity;
@@ -504,7 +517,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 	}
 
 	public addWatchExpression(session: debug.IRawDebugSession, stackFrame: debug.IStackFrame, name: string): Promise {
-		var we = new Expression(name, false);
+		const we = new Expression(name, false);
 		this.watchExpressions.push(we);
 		if (!name) {
 			this.emit(debug.ModelEvents.WATCH_EXPRESSIONS_UPDATED, we);
@@ -515,7 +528,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 	}
 
 	public renameWatchExpression(session: debug.IRawDebugSession, stackFrame: debug.IStackFrame, id: string, newName: string): Promise {
-		var filtered = this.watchExpressions.filter(we => we.getId() === id);
+		const filtered = this.watchExpressions.filter(we => we.getId() === id);
 		if (filtered.length === 1) {
 			filtered[0].name = newName;
 			return this.evaluateExpression(session, stackFrame, filtered[0], false).then(() => {
@@ -528,7 +541,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 
 	public evaluateWatchExpressions(session: debug.IRawDebugSession, stackFrame: debug.IStackFrame, id: string = null): Promise {
 		if (id) {
-			var filtered = this.watchExpressions.filter(we => we.getId() === id);
+			const filtered = this.watchExpressions.filter(we => we.getId() === id);
 			if (filtered.length !== 1) {
 				return Promise.as(null);
 			}
@@ -599,17 +612,17 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 		}
 
 		if (data.callStack) {
-			// Convert raw call stack into proper modelled call stack
+			// convert raw call stack into proper modelled call stack
 			this.threads[data.threadId].callStack = data.callStack.map(
 				(rsf, level) => {
 					if (!rsf) {
-						return new StackFrame(data.threadId, 0, Source.fromUri(uri.parse('unknown')), nls.localize('unknownStack', "Unknown stack location"), undefined, undefined);
+						return new StackFrame(data.threadId, 0, new Source({ name: 'unknown' }), nls.localize('unknownStack', "Unknown stack location"), undefined, undefined);
 					}
 
-					return new StackFrame(data.threadId, rsf.id, rsf.source ? Source.fromRawSource(rsf.source) : Source.fromUri(uri.parse('unknown')), rsf.name, rsf.line, rsf.column);
+					return new StackFrame(data.threadId, rsf.id, rsf.source ? new Source(rsf.source) : new Source({ name: 'unknown' }), rsf.name, rsf.line, rsf.column);
 				});
 
-			this.threads[data.threadId].exception = data.exception;
+			this.threads[data.threadId].stoppedReason = data.stoppedReason;
 		}
 
 		this.emit(debug.ModelEvents.CALLSTACK_UPDATED);

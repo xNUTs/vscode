@@ -3,29 +3,30 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import nls = require('vs/nls');
 import uri from 'vs/base/common/uri';
 import { TPromise, Promise } from 'vs/base/common/winjs.base';
 import ee = require('vs/base/common/eventEmitter');
 import severity from 'vs/base/common/severity';
 import { createDecorator, ServiceIdentifier } from 'vs/platform/instantiation/common/instantiation';
 import editor = require('vs/editor/common/editorCommon');
+import editorbrowser = require('vs/editor/browser/editorBrowser');
 import { Source } from 'vs/workbench/parts/debug/common/debugSource';
 
-export var VIEWLET_ID = 'workbench.view.debug';
-export var DEBUG_SERVICE_ID = 'debugService';
-export var CONTEXT_IN_DEBUG_MODE = 'inDebugMode';
+export const VIEWLET_ID = 'workbench.view.debug';
+export const REPL_ID = 'workbench.panel.repl';
+export const DEBUG_SERVICE_ID = 'debugService';
+export const CONTEXT_IN_DEBUG_MODE = 'inDebugMode';
 
-// Raw
+// raw
 
 export interface IRawModelUpdate {
 	threadId: number;
 	thread?: DebugProtocol.Thread;
 	callStack?: DebugProtocol.StackFrame[];
-	exception?: boolean;
+	stoppedReason?: string;
 }
 
-// Model
+// model
 
 export interface ITreeElement {
 	getId(): string;
@@ -39,13 +40,14 @@ export interface IExpressionContainer extends ITreeElement {
 export interface IExpression extends ITreeElement, IExpressionContainer {
 	name: string;
 	value: string;
+	valueChanged: boolean;
 }
 
 export interface IThread extends ITreeElement {
 	threadId: number;
 	name: string;
 	callStack: IStackFrame[];
-	exception: boolean;
+	stoppedReason: string;
 }
 
 export interface IScope extends IExpressionContainer {
@@ -90,7 +92,7 @@ export interface IExceptionBreakpoint extends IEnablement {
 	name: string;
 }
 
-// Events
+// events
 
 export var ModelEvents = {
 	BREAKPOINTS_UPDATED: 'BreakpointsUpdated',
@@ -118,7 +120,7 @@ export var SessionEvents = {
 	OUTPUT: 'output'
 };
 
-// Model interfaces
+// model interfaces
 
 export interface IViewModel extends ee.EventEmitter {
 	getFocusedStackFrame(): IStackFrame;
@@ -128,7 +130,7 @@ export interface IViewModel extends ee.EventEmitter {
 }
 
 export interface IModel extends ee.IEventEmitter, ITreeElement {
-	getThreads(): { [reference: number]: IThread; };
+	getThreads(): { [threadId: number]: IThread; };
 	getBreakpoints(): IBreakpoint[];
 	areBreakpointsActivated(): boolean;
 	getFunctionBreakpoints(): IFunctionBreakpoint[];
@@ -137,7 +139,7 @@ export interface IModel extends ee.IEventEmitter, ITreeElement {
 	getReplElements(): ITreeElement[];
 }
 
-// Service enums
+// service enums
 
 export enum State {
 	Disabled,
@@ -147,7 +149,7 @@ export enum State {
 	Running
 }
 
-// Service interfaces
+// service interfaces
 
 export interface IGlobalConfig {
 	version: string;
@@ -197,7 +199,7 @@ export interface IRawAdapter extends IRawEnvAdapter {
 export interface IRawDebugSession extends ee.EventEmitter {
 	getType(): string;
 	isAttach: boolean;
-	disconnect(restart?: boolean): TPromise<DebugProtocol.DisconnectResponse>;
+	disconnect(restart?: boolean, force?: boolean): TPromise<DebugProtocol.DisconnectResponse>;
 
 	next(args: DebugProtocol.NextArguments): TPromise<DebugProtocol.NextResponse>;
 	stepIn(args: DebugProtocol.StepInArguments): TPromise<DebugProtocol.StepInResponse>;
@@ -231,6 +233,7 @@ export interface IDebugService extends ee.IEventEmitter {
 	toggleBreakpointsActivated(): Promise;
 	removeAllBreakpoints(): Promise;
 	sendAllBreakpoints(): Promise;
+	editBreakpoint(editor: editorbrowser.ICodeEditor, lineNumber: number): Promise;
 
 	addFunctionBreakpoint(functionName?: string): Promise;
 	renameFunctionBreakpoint(id: string, newFunctionName: string): Promise;
@@ -260,9 +263,9 @@ export interface IDebugService extends ee.IEventEmitter {
 	revealRepl(inBackground?:boolean): Promise;
 }
 
-// Utils
+// utils
 
-var _formatPIIRegexp = /{([^}]+)}/g;
+const _formatPIIRegexp = /{([^}]+)}/g;
 
 export function formatPII(value:string, excludePII: boolean, args: {[key: string]: string}): string {
 	return value.replace(_formatPIIRegexp, function(match, group) {

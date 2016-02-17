@@ -10,7 +10,7 @@ import nls = require('vs/nls');
 import {TPromise} from 'vs/base/common/winjs.base';
 import Errors = require('vs/base/common/errors');
 import dom = require('vs/base/browser/dom');
-import Tree = require('vs/base/parts/tree/common/tree');
+import Tree = require('vs/base/parts/tree/browser/tree');
 import TreeImpl = require('vs/base/parts/tree/browser/treeImpl');
 import TreeDefaults = require('vs/base/parts/tree/browser/treeDefaults');
 import QuickFixModel = require('./quickFixModel');
@@ -238,7 +238,8 @@ export class QuickFixSelectionWidget implements EditorBrowser.IContentWidget {
 			twistiePixels: 0,
 			alwaysFocused: true,
 			verticalScrollMode: 'visible',
-			useShadows: false
+			useShadows: false,
+			ariaLabel: nls.localize('treeAriaLabel', "Quick Fix")
 		});
 
 		this.listenersToRemove.push(this.tree.addListener('selection', (e:Tree.ISelectionEvent) => {

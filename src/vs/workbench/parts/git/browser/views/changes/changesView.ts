@@ -18,9 +18,9 @@ import Builder = require('vs/base/browser/builder');
 import Keyboard = require('vs/base/browser/keyboardEvent');
 import Actions = require('vs/base/common/actions');
 import ActionBar = require('vs/base/browser/ui/actionbar/actionbar');
-import Tree = require('vs/base/parts/tree/common/tree');
+import Tree = require('vs/base/parts/tree/browser/tree');
 import TreeImpl = require('vs/base/parts/tree/browser/treeImpl');
-import WorkbenchEvents = require('vs/workbench/browser/events');
+import WorkbenchEvents = require('vs/workbench/common/events');
 import git = require('vs/workbench/parts/git/common/git');
 import GitView = require('vs/workbench/parts/git/browser/views/view');
 import GitActions = require('vs/workbench/parts/git/browser/gitActions');
@@ -138,7 +138,8 @@ export class ChangesView extends EventEmitter.EventEmitter implements GitView.IV
 			flexibleHeight: true
 		});
 
-		this.addEmitter2(this.commitInputBox, 'commitInputBox');
+		this.commitInputBox.onDidChange((value) => this.emit('change', value));
+		this.commitInputBox.onDidHeightChange((value) => this.emit('heightchange', value));
 
 		$(this.commitInputBox.inputElement).on('keydown', (e:KeyboardEvent) => {
 			var keyboardEvent = new Keyboard.StandardKeyboardEvent(e);
@@ -168,18 +169,20 @@ export class ChangesView extends EventEmitter.EventEmitter implements GitView.IV
 			renderer: renderer,
 			filter: new Viewer.Filter(),
 			sorter: new Viewer.Sorter(),
+			accessibilityProvider: new Viewer.AccessibilityProvider(),
 			dnd: dnd,
 			controller: controller
 		}, {
 			indentPixels: 0,
-			twistiePixels: 20
+			twistiePixels: 20,
+			ariaLabel: nls.localize('treeAriaLabel', "Changes View")
 		});
 
 		this.tree.setInput(this.gitService.getModel().getStatus());
 		this.tree.expandAll(this.gitService.getModel().getStatus().getGroups());
 
 		this.toDispose.push(this.tree.addListener2('selection', (e) => this.onSelection(e)));
-		this.toDispose.push(this.commitInputBox.addListener2('heightchange', () => this.layout()));
+		this.toDispose.push(this.commitInputBox.onDidHeightChange(() => this.layout()));
 	}
 
 	public focus():void {
@@ -199,7 +202,7 @@ export class ChangesView extends EventEmitter.EventEmitter implements GitView.IV
 		this.currentDimension = dimension;
 
 		this.commitInputBox.layout();
-		var statusViewHeight = dimension.height - (this.commitInputBox.height + 10 /* margin */);
+		var statusViewHeight = dimension.height - (this.commitInputBox.height + 12 /* margin */);
 		this.$statusView.size(dimension.width, statusViewHeight);
 		this.tree.layout(statusViewHeight);
 
@@ -250,7 +253,9 @@ export class ChangesView extends EventEmitter.EventEmitter implements GitView.IV
 				this.instantiationService.createInstance(GitActions.SyncAction, GitActions.SyncAction.ID, GitActions.SyncAction.LABEL),
 				this.instantiationService.createInstance(GitActions.PullAction, GitActions.PullAction.ID, GitActions.PullAction.LABEL),
 				this.instantiationService.createInstance(GitActions.PullWithRebaseAction),
-				this.instantiationService.createInstance(GitActions.PushAction),
+				this.instantiationService.createInstance(GitActions.PushAction, GitActions.PushAction.ID, GitActions.PushAction.LABEL),
+				new ActionBar.Separator(),
+				this.instantiationService.createInstance(GitActions.PublishAction, GitActions.PublishAction.ID, GitActions.PublishAction.LABEL),
 				new ActionBar.Separator(),
 				this.instantiationService.createInstance(GitActions.CommitAction, this),
 				this.instantiationService.createInstance(GitActions.StageAndCommitAction, this),
@@ -326,7 +331,7 @@ export class ChangesView extends EventEmitter.EventEmitter implements GitView.IV
 			return;
 		}
 
-		if (e.payload && e.payload.origin === 'keyboard' && (<IKeyboardEvent>e.payload.originalEvent).equals(CommonKeybindings.ENTER)) {
+		if (e.payload && e.payload.origin === 'keyboard' && !(<IKeyboardEvent>e.payload.originalEvent).equals(CommonKeybindings.ENTER)) {
 			return;
 		}
 
@@ -406,12 +411,12 @@ export class ChangesView extends EventEmitter.EventEmitter implements GitView.IV
 			const resource = fileInput.getResource();
 
 			const workspaceRoot = this.contextService.getWorkspace().resource.fsPath;
-			if (!paths.isEqualOrParent(resource.fsPath, workspaceRoot)) {
+			if (!workspaceRoot || !paths.isEqualOrParent(resource.fsPath, workspaceRoot)) {
 				return null; // out of workspace not yet supported
 			}
 
 			const repositoryRoot = this.gitService.getModel().getRepositoryRoot();
-			if (!paths.isEqualOrParent(resource.fsPath, repositoryRoot)) {
+			if (!repositoryRoot || !paths.isEqualOrParent(resource.fsPath, repositoryRoot)) {
 				return null; // out of repository not supported
 			}
 

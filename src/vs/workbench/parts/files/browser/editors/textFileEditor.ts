@@ -10,23 +10,24 @@ import errors = require('vs/base/common/errors');
 import {MIME_BINARY, MIME_TEXT} from 'vs/base/common/mime';
 import labels = require('vs/base/common/labels');
 import types = require('vs/base/common/types');
-import {IEditorViewState} from 'vs/editor/common/editorCommon';
+import paths = require('vs/base/common/paths');
 import {Action} from 'vs/base/common/actions';
+import {IEditorOptions} from 'vs/editor/common/editorCommon';
 import {VIEWLET_ID, TEXT_FILE_EDITOR_ID, ITextFileService} from 'vs/workbench/parts/files/common/files';
 import {SaveErrorHandler} from 'vs/workbench/parts/files/browser/saveErrorHandler';
 import {BaseTextEditor} from 'vs/workbench/browser/parts/editor/textEditor';
 import {EditorInput, EditorOptions, TextEditorOptions, EditorModel} from 'vs/workbench/common/editor';
-import {TextFileEditorModel} from 'vs/workbench/parts/files/browser/editors/textFileEditorModel';
-import {BinaryEditorModel} from 'vs/workbench/browser/parts/editor/binaryEditorModel';
+import {TextFileEditorModel} from 'vs/workbench/parts/files/common/editors/textFileEditorModel';
+import {BinaryEditorModel} from 'vs/workbench/common/editor/binaryEditorModel';
 import {FileEditorInput} from 'vs/workbench/parts/files/browser/editors/fileEditorInput';
 import {ExplorerViewlet} from 'vs/workbench/parts/files/browser/explorerViewlet';
-import {IQuickOpenService} from 'vs/workbench/services/quickopen/browser/quickOpenService';
+import {IQuickOpenService} from 'vs/workbench/services/quickopen/common/quickOpenService';
 import {IViewletService} from 'vs/workbench/services/viewlet/common/viewletService';
 import {IFileOperationResult, FileOperationResult, FileChangesEvent, EventType, IFileService} from 'vs/platform/files/common/files';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {IStorageService} from 'vs/platform/storage/common/storage';
-import {IConfigurationService, IConfigurationServiceEvent, ConfigurationServiceEventTypes} from 'vs/platform/configuration/common/configuration';
+import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IMessageService, Severity, CancelAction} from 'vs/platform/message/common/message';
@@ -174,8 +175,8 @@ export class TextFileEditor extends BaseTextEditor {
 				return;
 			}
 
-			// Offer to create a file from the error if we have a file not found
-			if ((<IFileOperationResult>error).fileOperationResult === FileOperationResult.FILE_NOT_FOUND) {
+			// Offer to create a file from the error if we have a file not found and the name is valid
+			if ((<IFileOperationResult>error).fileOperationResult === FileOperationResult.FILE_NOT_FOUND && paths.isValidBasename(paths.basename((<FileEditorInput>input).getResource().fsPath))) {
 				return Promise.wrapError(errors.create(errors.toErrorMessage(error), { actions: [
 					CancelAction,
 					new Action('workbench.files.action.createMissingFile', nls.localize('createFile', "Create File"), null, true, () => {
@@ -251,6 +252,13 @@ export class TextFileEditor extends BaseTextEditor {
 		}, errors.onUnexpectedError);
 
 		return true; // in any case we handled it
+	}
+
+	protected getCodeEditorOptions(): IEditorOptions {
+		let options = super.getCodeEditorOptions();
+		options.ariaLabel = nls.localize('fileEditorAriaLabel', "Text file editor");
+
+		return options;
 	}
 
 	public supportsSplitEditor(): boolean {

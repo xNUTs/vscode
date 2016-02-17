@@ -22,18 +22,6 @@ export interface IWorkerParticipant {
 
 }
 
-export interface IValidateParticipant extends IWorkerParticipant {
-	/**
-	 * @param context mode specific data that helps with validation.
-	 */
-	validate(mirrorModel:EditorCommon.IMirrorModel, markerService:IMarkerService, context:any):void;
-}
-
-export interface ISuggestParticipant extends IWorkerParticipant {
-	filter?:(word:string, suggestion:ISuggestion) => IMatch[];
-	suggest?:(resource:URI, position:EditorCommon.IPosition, context?:any) => TPromise<ISuggestResult>;
-}
-
 export enum Bracket {
 	None = 0,
 	Open = 1,
@@ -408,10 +396,6 @@ export interface ISuggestionFilter {
 	(word: string, suggestion: ISuggestion): IMatch[];
 }
 
-export interface ISuggestionCompare {
-	(one: ISuggestion, other: ISuggestion): number;
-}
-
 /**
  * Interface used to get completion suggestions at a specific location.
  */
@@ -425,13 +409,12 @@ export interface ISuggestSupport {
 	/**
 	 * Compute more details for the given suggestion.
 	 */
-	getSuggestionDetails?:(resource:URI, position:EditorCommon.IPosition, suggestion:ISuggestion)=>TPromise<ISuggestion>;
+	getSuggestionDetails?: (resource: URI, position: EditorCommon.IPosition, suggestion: ISuggestion) => TPromise<ISuggestion>;
 
-	getFilter():ISuggestionFilter;
-	getSorter?():ISuggestionCompare;
-	getTriggerCharacters():string[];
-	shouldShowEmptySuggestionList():boolean;
-	shouldAutotriggerSuggest(context:ILineContext, offset:number, triggeredByCharacter:string):boolean;
+	getFilter(): ISuggestionFilter;
+	getTriggerCharacters(): string[];
+	shouldShowEmptySuggestionList(): boolean;
+	shouldAutotriggerSuggest(context: ILineContext, offset: number, triggeredByCharacter: string): boolean;
 }
 
 /**

@@ -91,6 +91,8 @@ export interface IConfiguration {
 }
 
 export interface IEnvironment {
+	language: string;
+
 	appName: string;
 	appRoot: string;
 	isBuilt: boolean;
@@ -138,5 +140,10 @@ export interface IEnvironment {
 	aiConfig: {
 		key: string;
 		asimovKey: string;
-	}
+	};
+
+	sendASmile: {
+		reportIssueUrl: string,
+		requestFeatureUrl: string
+	};
 }

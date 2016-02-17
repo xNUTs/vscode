@@ -4,8 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import nls = require('vs/nls');
-
 import Lifecycle = require('vs/base/common/lifecycle');
 import DomUtils = require('vs/base/browser/dom');
 import EventEmitter = require('vs/base/common/eventEmitter');
@@ -174,7 +172,7 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 		this.textArea.setAttribute('autocorrect', 'off');
 		this.textArea.setAttribute('autocapitalize', 'off');
 		this.textArea.setAttribute('spellcheck', 'false');
-		this.textArea.setAttribute('aria-label', nls.localize('editorViewAccessibleLabel', "Editor content"));
+		this.textArea.setAttribute('aria-label', this.context.configuration.editor.ariaLabel);
 		this.textArea.setAttribute('role', 'textbox');
 		this.textArea.setAttribute('aria-multiline', 'true');
 		DomUtils.StyleMutator.setTop(this.textArea, 0);
@@ -273,6 +271,7 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 		this.overflowGuardContainer.appendChild(this.textArea);
 		this.overflowGuardContainer.appendChild(this.textAreaCover);
 		this.domNode.appendChild(this.overflowGuardContainer);
+		this.domNode.appendChild(this.contentWidgets.overflowingContentWidgetsDomNode);
 	}
 
 	private _flushAccumulatedAndRenderNow(): void {
@@ -365,12 +364,7 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 					throw new Error('ViewImpl.pointerHandler.visibleRangeForPosition2: View is disposed');
 				}
 				this._flushAccumulatedAndRenderNow();
-				var correctionTop = 0;
-				// FF is very weird
-//				if (Env.browser.canUseTranslate3d && Env.browser.isFirefox) {
-//					correctionTop = this.layoutProvider.getCurrentViewport().top;
-//				}
-				var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(lineNumber, column, lineNumber, column), 0, correctionTop, false);
+				var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(lineNumber, column, lineNumber, column), 0);
 				if (!visibleRanges) {
 					return null;
 				}
@@ -398,11 +392,7 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 				this._flushAccumulatedAndRenderNow();
 				var linesViewPortData = this.layoutProvider.getLinesViewportData();
 				var correctionTop = 0;
-				// FF is very weird
-//				if (Env.browser.canUseTranslate3d && Env.browser.isFirefox) {
-//					correctionTop = this.layoutProvider.getCurrentViewport().top;
-//				}
-				var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(lineNumber, column, lineNumber, column), linesViewPortData.visibleRangesDeltaTop, correctionTop, false);
+				var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(lineNumber, column, lineNumber, column), linesViewPortData.visibleRangesDeltaTop);
 				if (!visibleRanges) {
 					return null;
 				}
@@ -439,9 +429,9 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 		if (e.stylingInfo) {
 			Configuration.applyEditorStyling(this.domNode, this.context.configuration.editor.stylingInfo);
 		}
-		// Give textarea same font size & line height as editor, for the IME case (when the textarea is visible)
-		DomUtils.StyleMutator.setFontSize(this.textArea, this.context.configuration.editor.fontSize);
-		DomUtils.StyleMutator.setLineHeight(this.textArea, this.context.configuration.editor.lineHeight);
+		if (e.ariaLabel) {
+			this.textArea.setAttribute('aria-label', this.context.configuration.editor.ariaLabel);
+		}
 		return false;
 	}
 	public onScrollChanged(e:EditorCommon.IScrollEvent): boolean {
@@ -576,7 +566,7 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 					});
 					var viewPosition = this.context.model.convertModelPositionToViewPosition(modelPosition.lineNumber, modelPosition.column);
 					this._flushAccumulatedAndRenderNow();
-					var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(viewPosition.lineNumber, viewPosition.column, viewPosition.lineNumber, viewPosition.column), 0, 0, false);
+					var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(viewPosition.lineNumber, viewPosition.column, viewPosition.lineNumber, viewPosition.column), 0);
 					if (!visibleRanges) {
 						return -1;
 					}
@@ -627,12 +617,7 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 		if (this._isDisposed) {
 			throw new Error('ViewImpl.focus: View is disposed');
 		}
-		// Chrome does not trigger the focus event at all if focus is in url bar and clicking into the editor
-		// Calling .focus() and then .select() seems to be a good workaround for Chrome in this case
-		var state = DomUtils.saveParentsScrollTop(this.textArea);
-		this.textArea.focus();
-		DomUtils.selectTextInInputElement(this.textArea);
-		DomUtils.restoreParentsScrollTop(this.textArea, state);
+		this.keyboardHandler.focusTextArea();
 
 		// IE does not trigger the focus event immediately, so we must help it a little bit
 		this._setHasFocus(true);
@@ -762,12 +747,15 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 		});
 	}
 
-	public render(): void {
+	public render(now:boolean): void {
 		if (this._isDisposed) {
 			throw new Error('ViewImpl.render: View is disposed');
 		}
 		// Force a render with a layout event
 		this.layoutProvider.emitLayoutChangedEvent();
+		if (now) {
+			this._flushAccumulatedAndRenderNow();
+		}
 	}
 
 	public renderOnce(callback: () => any): any {
@@ -820,11 +808,6 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 		var vInfo = this.layoutProvider.getCurrentViewport();
 
 		var deltaTop = linesViewportData.visibleRangesDeltaTop;
-		var correctionTop = 0;
-		// FF is very weird
-//		if (Env.browser.canUseTranslate3d && Env.browser.isFirefox) {
-//			correctionTop = vInfo.top;
-//		}
 
 		var r:EditorBrowser.IRenderingContext = {
 			linesViewportData: linesViewportData,
@@ -849,30 +832,14 @@ export class View extends ViewEventHandler implements EditorBrowser.IView, Lifec
 				return scrolledTop;
 			},
 
-			heightInPxForLine: (lineNumber:number) => {
-				return this.layoutProvider.heightInPxForLine(lineNumber);
-			},
-
 			getDecorationsInViewport: () => linesViewportData.getDecorationsInViewport(),
-
-			visibleRangesForRange: (range:EditorCommon.IRange, includeNewLines:boolean) => {
-				return this.viewLines.visibleRangesForRange2(range, deltaTop, correctionTop, includeNewLines);
-			},
 
 			linesVisibleRangesForRange: (range:EditorCommon.IRange, includeNewLines:boolean) => {
 				return this.viewLines.linesVisibleRangesForRange(range, includeNewLines);
 			},
 
 			visibleRangeForPosition: (position:EditorCommon.IPosition) => {
-				var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(position.lineNumber, position.column, position.lineNumber, position.column), deltaTop, correctionTop, false);
-				if (!visibleRanges) {
-					return null;
-				}
-				return visibleRanges[0];
-			},
-
-			visibleRangeForPosition2: (lineNumber:number, column:number) => {
-				var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(lineNumber, column, lineNumber, column), deltaTop, correctionTop, false);
+				var visibleRanges = this.viewLines.visibleRangesForRange2(new Range(position.lineNumber, position.column, position.lineNumber, position.column), deltaTop);
 				if (!visibleRanges) {
 					return null;
 				}

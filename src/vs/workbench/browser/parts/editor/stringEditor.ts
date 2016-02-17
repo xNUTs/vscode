@@ -12,15 +12,14 @@ import {IEditorOptions, IEditorViewState} from 'vs/editor/common/editorCommon';
 import {DefaultConfig} from 'vs/editor/common/config/defaultConfig';
 import {EditorConfiguration} from 'vs/editor/common/config/commonEditorConfig';
 import {TextEditorOptions, EditorModel, EditorInput, EditorOptions} from 'vs/workbench/common/editor';
-import {BaseTextEditorModel} from 'vs/workbench/browser/parts/editor/textEditorModel';
-import {LogEditorInput} from 'vs/workbench/browser/parts/editor/logEditorInput';
-import {UntitledEditorInput} from 'vs/workbench/browser/parts/editor/untitledEditorInput';
+import {BaseTextEditorModel} from 'vs/workbench/common/editor/textEditorModel';
+import {UntitledEditorInput} from 'vs/workbench/common/editor/untitledEditorInput';
 import {BaseTextEditor} from 'vs/workbench/browser/parts/editor/textEditor';
-import {UntitledEditorEvent, EventType} from 'vs/workbench/browser/events';
+import {UntitledEditorEvent, EventType} from 'vs/workbench/common/events';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {IStorageService} from 'vs/platform/storage/common/storage';
-import {IConfigurationService, IConfigurationServiceEvent, ConfigurationServiceEventTypes} from 'vs/platform/configuration/common/configuration';
+import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IMessageService} from 'vs/platform/message/common/message';
@@ -35,8 +34,6 @@ export class StringEditor extends BaseTextEditor {
 
 	public static ID = 'workbench.editors.stringEditor';
 
-	private defaultWrappingColumn: number;
-	private defaultLineNumbers: boolean;
 	private mapResourceToEditorViewState: { [resource: string]: IEditorViewState; };
 
 	constructor(
@@ -50,11 +47,7 @@ export class StringEditor extends BaseTextEditor {
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
 		@IModeService modeService: IModeService
 	) {
-
 		super(StringEditor.ID, telemetryService, instantiationService, contextService, storageService, messageService, configurationService, eventService, editorService, modeService);
-
-		this.defaultWrappingColumn = DefaultConfig.editor.wrappingColumn;
-		this.defaultLineNumbers = DefaultConfig.editor.lineNumbers;
 
 		this.mapResourceToEditorViewState = Object.create(null);
 
@@ -132,41 +125,22 @@ export class StringEditor extends BaseTextEditor {
 
 			// Apply options again because input has changed
 			textEditor.updateOptions(this.getCodeEditorOptions());
-
-			// Auto reveal last line for log editors
-			if (input instanceof LogEditorInput) {
-				this.revealLastLine();
-			}
 		});
-	}
-
-	protected applyConfiguration(configuration: any): void {
-
-		// Remember some settings that we overwrite from #getCodeEditorOptions()
-		let editorConfig = configuration && configuration[EditorConfiguration.EDITOR_SECTION];
-		if (editorConfig) {
-			this.defaultWrappingColumn = editorConfig.wrappingColumn;
-			this.defaultLineNumbers = editorConfig.lineNumbers;
-		}
-
-		super.applyConfiguration(configuration);
 	}
 
 	protected getCodeEditorOptions(): IEditorOptions {
 		let options = super.getCodeEditorOptions();
 
 		let input = this.getInput();
-		let isLog = input instanceof LogEditorInput;
 		let isUntitled = input instanceof UntitledEditorInput;
+		let isReadonly = !isUntitled; // all string editors are readonly except for the untitled one
 
-		options.readOnly = !isUntitled; 				// all string editors are readonly except for the untitled one
+		options.readOnly = isReadonly;
 
-		if (isLog) {
-			options.wrappingColumn = 0;					// all log editors wrap
-			options.lineNumbers = false;				// all log editors hide line numbers
+		if (isReadonly) {
+			options.ariaLabel = nls.localize('readonlyEditorAriaLabel', "Readonly text editor");
 		} else {
-			options.wrappingColumn = this.defaultWrappingColumn; 	// otherwise make sure to restore the defaults
-			options.lineNumbers = this.defaultLineNumbers; 			// otherwise make sure to restore the defaults
+			options.ariaLabel = nls.localize('untitledFileEditorAriaLabel', "Untitled file text editor");
 		}
 
 		return options;
@@ -186,15 +160,6 @@ export class StringEditor extends BaseTextEditor {
 
 	public supportsSplitEditor(): boolean {
 		return true;
-	}
-
-	public focus(): void {
-		super.focus();
-
-		// Auto reveal last line for log editors
-		if (this.getInput() instanceof LogEditorInput) {
-			this.revealLastLine();
-		}
 	}
 
 	public clearInput(): void {

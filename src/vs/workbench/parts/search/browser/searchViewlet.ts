@@ -16,6 +16,7 @@ import {IExpression, splitGlobAware} from 'vs/base/common/glob';
 import {isFunction} from 'vs/base/common/types';
 import URI from 'vs/base/common/uri';
 import strings = require('vs/base/common/strings');
+import paths = require('vs/base/common/paths');
 import dom = require('vs/base/browser/dom');
 import {IAction, Action, IActionRunner} from 'vs/base/common/actions';
 import {StandardKeyboardEvent} from 'vs/base/browser/keyboardEvent';
@@ -25,14 +26,14 @@ import {FileLabel} from 'vs/base/browser/ui/filelabel/fileLabel';
 import {FindInput} from 'vs/base/browser/ui/findinput/findInput';
 import {LeftRightWidget, IRenderer} from 'vs/base/browser/ui/leftRightWidget/leftRightWidget';
 import {CountBadge} from 'vs/base/browser/ui/countBadge/countBadge';
-import {ITree, IElementCallback, IFilter, ISorter, IDataSource} from 'vs/base/parts/tree/common/tree';
+import {ITree, IElementCallback, IFilter, ISorter, IDataSource, IAccessibilityProvider} from 'vs/base/parts/tree/browser/tree';
 import {Tree} from 'vs/base/parts/tree/browser/treeImpl';
 import {ClickBehavior, DefaultController} from 'vs/base/parts/tree/browser/treeDefaults';
 import {ActionsRenderer} from 'vs/base/parts/tree/browser/actionsRenderer';
 import {ContributableActionProvider} from 'vs/workbench/browser/actionBarRegistry';
 import {Scope} from 'vs/workbench/common/memento';
 import {OpenGlobalSettingsAction} from 'vs/workbench/browser/actions/openSettings';
-import {UntitledEditorEvent, EventType as WorkbenchEventType} from 'vs/workbench/browser/events';
+import {UntitledEditorEvent, EventType as WorkbenchEventType} from 'vs/workbench/common/events';
 import {ITextFileService} from 'vs/workbench/parts/files/common/files';
 import {FileChangeType, FileChangesEvent, EventType as FileEventType} from 'vs/platform/files/common/files';
 import {Viewlet} from 'vs/workbench/browser/viewlet';
@@ -125,9 +126,28 @@ export class SearchSorter implements ISorter {
 	public compare(tree: ITree, elementA: FileMatchOrMatch, elementB: FileMatchOrMatch): number {
 		if (elementA instanceof FileMatch && elementB instanceof FileMatch) {
 			return strings.localeCompare(elementA.resource().fsPath, elementB.resource().fsPath) || strings.localeCompare(elementA.name(), elementB.name());
+		}
 
-		} else if (elementA instanceof Match && elementB instanceof Match) {
+		if (elementA instanceof Match && elementB instanceof Match) {
 			return Range.compareRangesUsingStarts(elementA.range(), elementB.range());
+		}
+	}
+}
+
+export class SearchAccessibilityProvider implements IAccessibilityProvider {
+
+	constructor(@IWorkspaceContextService private contextService: IWorkspaceContextService) {
+	}
+
+	public getAriaLabel(tree: ITree, element: FileMatchOrMatch): string {
+		if (element instanceof FileMatch) {
+			const path = this.contextService.toWorkspaceRelativePath(element.resource()) || element.resource().fsPath;
+
+			return nls.localize('fileMatchAriaLabel', "{0} matches in file {1} of folder {2}", element.count(), element.name(), paths.dirname(path));
+		}
+
+		if (element instanceof Match) {
+			return element.text();
 		}
 	}
 }
@@ -210,7 +230,7 @@ class SearchRenderer extends ActionsRenderer {
 	}
 
 	public getContentHeight(tree: ITree, element: any): number {
-		return 24;
+		return 22;
 	}
 
 	public renderContents(tree: ITree, element: FileMatchOrMatch, domElement: HTMLElement, previousCleanupFn: IElementCallback): IElementCallback {
@@ -451,7 +471,7 @@ class PatternInput {
 	}
 
 	public destroy(): void {
-		this.pattern.destroy();
+		this.pattern.dispose();
 		this.listenersToRemove.forEach((element) => {
 			element();
 		});
@@ -523,11 +543,11 @@ class PatternInput {
 	}
 
 	public isGlobPattern(): boolean {
-		return this.pattern.isChecked;
+		return this.pattern.checked;
 	}
 
 	public setIsGlobPattern(value: boolean): void {
-		this.pattern.setChecked(value);
+		this.pattern.checked = value;
 		this.setInputWidth();
 	}
 
@@ -550,15 +570,20 @@ class PatternInput {
 			}
 		});
 
-		this.pattern = new Checkbox('pattern', nls.localize('patternDescription', "Use Glob Patterns"), false, () => {
-			this.onOptionChange(null);
-			this.inputBox.focus();
-			this.setInputWidth();
+		this.pattern = new Checkbox({
+			actionClassName: 'pattern',
+			title: nls.localize('patternDescription', "Use Glob Patterns"),
+			isChecked: false,
+			onChange: () => {
+				this.onOptionChange(null);
+				this.inputBox.focus();
+				this.setInputWidth();
 
-			if (this.isGlobPattern()) {
-				this.showGlobHelp();
-			} else {
-				this.inputBox.hideMessage();
+				if (this.isGlobPattern()) {
+					this.showGlobHelp();
+				} else {
+					this.inputBox.hideMessage();
+				}
 			}
 		});
 
@@ -697,8 +722,7 @@ export class SearchViewlet extends Viewlet {
 			builder = div;
 		});
 
-		let onKeyUp = (e: KeyboardEvent) => {
-			let keyboardEvent = new StandardKeyboardEvent(e);
+		let onStandardKeyUp = (keyboardEvent: StandardKeyboardEvent) => {
 			if (keyboardEvent.keyCode === KeyCode.Enter) {
 				this.onQueryChanged(true);
 			} else if (keyboardEvent.keyCode === KeyCode.Escape) {
@@ -710,6 +734,10 @@ export class SearchViewlet extends Viewlet {
 					this.currentRequest = null;
 				}
 			}
+		};
+
+		let onKeyUp = (e: KeyboardEvent) => {
+			onStandardKeyUp(new StandardKeyboardEvent(e));
 		};
 
 		this.queryBox = builder.div({ 'class': 'query-box' }, (div) => {
@@ -733,22 +761,21 @@ export class SearchViewlet extends Viewlet {
 					}
 				}
 			};
-			this.findInput = new FindInput(div.getHTMLElement(), this.contextViewService, options)
-				.on(dom.EventType.KEY_UP, onKeyUp)
-				.on(dom.EventType.KEY_DOWN, (e: KeyboardEvent) => {
-					let keyboardEvent = new StandardKeyboardEvent(e);
-					if (keyboardEvent.keyCode === KeyCode.DownArrow) {
-						dom.EventHelper.stop(e);
-						if (this.showsFileTypes()) {
-							this.toggleFileTypes(true);
-						} else {
-							this.selectTreeIfNotSelected(keyboardEvent);
-						}
+			this.findInput = new FindInput(div.getHTMLElement(), this.contextViewService, options);
+			this.findInput.onKeyUp(onStandardKeyUp);
+			this.findInput.onKeyDown((keyboardEvent: StandardKeyboardEvent) => {
+				if (keyboardEvent.keyCode === KeyCode.DownArrow) {
+					dom.EventHelper.stop(keyboardEvent);
+					if (this.showsFileTypes()) {
+						this.toggleFileTypes(true, true);
+					} else {
+						this.selectTreeIfNotSelected(keyboardEvent);
 					}
-				})
-				.on(FindInput.OPTION_CHANGE, (e) => {
-					this.onQueryChanged(true);
-				});
+				}
+			});
+			this.findInput.onDidOptionChange(() => {
+				this.onQueryChanged(true);
+			});
 			this.findInput.setValue(contentPattern);
 			this.findInput.setRegex(isRegex);
 			this.findInput.setCaseSensitive(isCaseSensitive);
@@ -756,10 +783,18 @@ export class SearchViewlet extends Viewlet {
 		}).style({ position: 'relative' }).getHTMLElement();
 
 		this.queryDetails = builder.div({ 'class': ['query-details', 'separator'] }, (builder) => {
-			builder.div({ 'class': 'more', text: '\u2026'/*, href: '#'*/ }).on(dom.EventType.CLICK, (e) => {
-				dom.EventHelper.stop(e);
-				this.toggleFileTypes();
-			});
+			builder.div({ 'class': 'more', 'tabindex': 0, 'role': 'button', 'title': nls.localize('moreSearch', "Toggle Search Details") })
+				.on(dom.EventType.CLICK, (e) => {
+					dom.EventHelper.stop(e);
+					this.toggleFileTypes(true);
+				}).on(dom.EventType.KEY_UP, (e: KeyboardEvent) => {
+					let event = new StandardKeyboardEvent(e);
+
+					if (event.equals(CommonKeybindings.ENTER) || event.equals(CommonKeybindings.SPACE)) {
+						dom.EventHelper.stop(e);
+						this.toggleFileTypes();
+					}
+				});
 
 			//folder includes list
 			builder.div({ 'class': 'file-types' }, (builder) => {
@@ -829,6 +864,7 @@ export class SearchViewlet extends Viewlet {
 					actions: [this.instantiationService.createInstance(ConfigureGlobalExclusionsAction)]
 				});
 				this.inputPatternGlobalExclusions.inputElement.readOnly = true;
+				$(this.inputPatternGlobalExclusions.inputElement).attr('aria-readonly', 'true');
 				$(this.inputPatternGlobalExclusions.inputElement).addClass('disabled');
 			}).hide();
 		}).getHTMLElement();
@@ -846,8 +882,11 @@ export class SearchViewlet extends Viewlet {
 				renderer: renderer,
 				sorter: new SearchSorter(),
 				filter: new SearchFilter(),
-				controller: new SearchController()
-			});
+				controller: new SearchController(),
+				accessibilityProvider: this.instantiationService.createInstance(SearchAccessibilityProvider)
+			}, {
+					ariaLabel: nls.localize('treeAriaLabel', "Search Results")
+				});
 
 			this.toUnbind.push(() => renderer.dispose());
 
@@ -879,7 +918,7 @@ export class SearchViewlet extends Viewlet {
 		});
 
 		if (filePatterns !== '' || patternExclusions !== '' || patternIncludes !== '') {
-			this.toggleFileTypes(true, true);
+			this.toggleFileTypes(true, true, true);
 		}
 
 		this.configurationService.loadConfiguration().then((configuration) => {
@@ -972,7 +1011,7 @@ export class SearchViewlet extends Viewlet {
 
 	public layout(dimension: Dimension): void {
 		this.size = dimension;
-		Promise.timeout(10).done(() => { this.reLayout(); }, errors.onUnexpectedError);
+		this.reLayout();
 	}
 
 	public getControl(): ITree {
@@ -1023,18 +1062,25 @@ export class SearchViewlet extends Viewlet {
 		return dom.hasClass(this.queryDetails, 'more');
 	}
 
-	public toggleFileTypes(show?: boolean, skipLayout?: boolean): void {
+	public toggleFileTypes(moveFocus?: boolean, show?: boolean, skipLayout?: boolean): void {
 		let cls = 'more';
 		show = typeof show === 'undefined' ? !dom.hasClass(this.queryDetails, cls) : Boolean(show);
 		skipLayout = Boolean(skipLayout);
 
 		if (show) {
 			dom.addClass(this.queryDetails, cls);
-			this.inputPatternIncludes.focus();
-			this.inputPatternIncludes.select();
+			if (moveFocus) {
+				this.inputPatternIncludes.focus();
+				this.inputPatternIncludes.select();
+			}
 		} else {
 			dom.removeClass(this.queryDetails, cls);
+			if (moveFocus) {
+				this.findInput.focus();
+				this.findInput.select();
+			}
 		}
+
 		if (!skipLayout && this.size) {
 			this.layout(this.size);
 		}
@@ -1042,7 +1088,7 @@ export class SearchViewlet extends Viewlet {
 
 	public searchInFolder(resource: URI): void {
 		if (!this.showsFileTypes()) {
-			this.toggleFileTypes(true, false);
+			this.toggleFileTypes(true, true);
 		}
 
 		let workspaceRelativePath = this.contextService.toWorkspaceRelativePath(resource);
@@ -1110,13 +1156,9 @@ export class SearchViewlet extends Viewlet {
 
 		let includes: IExpression = this.inputPatternIncludes.getGlob();
 
-		let rootResources: URI[] = this.textFileService.getWorkingFilesModel().getOutOfWorkspaceContextEntries().map(e => e.resource);
-		if (this.contextService.getWorkspace()) {
-			rootResources.push(this.contextService.getWorkspace().resource);
-		}
-
 		let options: IQueryOptions = {
-			rootResources: rootResources,
+			folderResources: this.contextService.getWorkspace() ? [this.contextService.getWorkspace().resource] : [],
+			extraFileResources: this.textFileService.getWorkingFilesModel().getOutOfWorkspaceContextEntries().map(e => e.resource),
 			excludePattern: excludes,
 			includePattern: includes,
 			maxResults: SearchViewlet.MAX_TEXT_RESULTS,
@@ -1148,7 +1190,7 @@ export class SearchViewlet extends Viewlet {
 		this.disposeModel();
 		this.showEmptyStage();
 
-		let handledMatches: {[id: string]: boolean} = Object.create(null);
+		let handledMatches: { [id: string]: boolean } = Object.create(null);
 		let autoExpand = (alwaysExpandIfOneResult: boolean) => {
 			// Auto-expand / collapse based on number of matches:
 			// - alwaysExpandIfOneResult: expand file results if we have just one file result and less than 50 matches on a file
@@ -1223,9 +1265,9 @@ export class SearchViewlet extends Viewlet {
 				if (!completed) {
 					message = nls.localize('searchCanceled', "Search was canceled before any results could be found - ");
 				} else if (hasIncludes && hasExcludes) {
-					message = nls.localize('noResultsIncludesExcludes', "No results found matching '{0}' excluding '{1}' - ", includePattern, excludePattern);
+					message = nls.localize('noResultsIncludesExcludes', "No results found in '{0}' excluding '{1}' - ", includePattern, excludePattern);
 				} else if (hasIncludes) {
-					message = nls.localize('noResultsIncludes', "No results found matching '{0}' - ", includePattern);
+					message = nls.localize('noResultsIncludes', "No results found in '{0}' - ", includePattern);
 				} else if (hasExcludes) {
 					message = nls.localize('noResultsExcludes', "No results found excluding '{0}' - ", excludePattern);
 				} else {

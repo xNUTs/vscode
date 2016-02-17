@@ -8,7 +8,6 @@
 import 'vs/css!./media/explorerviewlet';
 import {Promise, TPromise} from 'vs/base/common/winjs.base';
 import {Dimension, Builder} from 'vs/base/browser/builder';
-import errors = require('vs/base/common/errors');
 import {Scope} from 'vs/workbench/common/memento';
 import {VIEWLET_ID} from 'vs/workbench/parts/files/common/files';
 import {CollapsibleViewletView, IViewletView, Viewlet} from 'vs/workbench/browser/viewlet';
@@ -103,6 +102,10 @@ export class ExplorerViewlet extends Viewlet {
 		return this.explorerView;
 	}
 
+	public getWorkingFilesView(): WorkingFilesView {
+		return this.workingFilesView;
+	}
+
 	public setVisible(visible: boolean): TPromise<void> {
 		return super.setVisible(visible).then(() => {
 			return Promise.join(this.views.map((view) => view.setVisible(visible)));
@@ -113,7 +116,9 @@ export class ExplorerViewlet extends Viewlet {
 		super.focus();
 
 		if (this.explorerView) {
-			this.explorerView.focus();
+			this.explorerView.focusBody();
+		} else if (this.workingFilesView) {
+			this.workingFilesView.focusBody();
 		}
 	}
 

@@ -10,7 +10,7 @@ import errors = require('vs/base/common/errors');
 import dom = require('vs/base/browser/dom');
 import mouse = require('vs/base/browser/mouseEvent');
 import keyboard = require('vs/base/browser/keyboardEvent');
-import _ = require('vs/base/parts/tree/common/tree');
+import _ = require('vs/base/parts/tree/browser/tree');
 import {CommonKeybindings} from 'vs/base/common/keyCodes'
 
 export interface ILegacyTemplateData {
@@ -403,5 +403,12 @@ export class DefaultSorter implements _.ISorter {
 
 	public compare(tree: _.ITree, element: any, otherElement: any):number {
 		return 0;
+	}
+}
+
+export class DefaultAccessibilityProvider implements _.IAccessibilityProvider {
+
+	getAriaLabel(tree: _.ITree, element: any): string {
+		return null;
 	}
 }

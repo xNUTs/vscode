@@ -11,8 +11,8 @@ import network = require('vs/base/common/network');
 import labels = require('vs/base/common/labels');
 import {Registry} from 'vs/platform/platform';
 import {Action} from 'vs/base/common/actions';
-import {IWorkbenchActionRegistry, Extensions} from 'vs/workbench/browser/actionRegistry';
-import {StringEditorInput} from 'vs/workbench/browser/parts/editor/stringEditorInput';
+import {IWorkbenchActionRegistry, Extensions} from 'vs/workbench/common/actionRegistry';
+import {StringEditorInput} from 'vs/workbench/common/editor/stringEditorInput';
 import {getDefaultValuesContent} from 'vs/platform/configuration/common/model';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
@@ -182,7 +182,7 @@ class DefaultSettingsInput extends StringEditorInput {
 	}
 
 	protected getResource(): URI {
-		return URI.create(network.schemas.inMemory, 'defaults', '/settings.json'); // URI is used to register JSON schema support
+		return URI.create('vscode', 'defaultsettings', '/settings.json'); // URI is used to register JSON schema support
 	}
 }
 
@@ -201,7 +201,7 @@ class DefaultKeybindingsInput extends StringEditorInput {
 	}
 
 	protected getResource(): URI {
-		return URI.create(network.schemas.inMemory, 'defaults', '/keybindings.json'); // URI is used to register JSON schema support
+		return URI.create('vscode', 'defaultsettings', '/keybindings.json'); // URI is used to register JSON schema support
 	}
 }
 

@@ -841,13 +841,19 @@ export class Cursor extends EventEmitter {
 	}
 
 	private emitCursorSelectionChanged(source:string, reason:string): void {
-		var selections = this.cursors.getSelections();
-		var primarySelection = selections[0];
-		var secondarySelections = selections.slice(1);
+		let selections = this.cursors.getSelections();
+		let primarySelection = selections[0];
+		let secondarySelections = selections.slice(1);
 
-		var e:EditorCommon.ICursorSelectionChangedEvent = {
+		let viewSelections = this.cursors.getViewSelections();
+		let primaryViewSelection = viewSelections[0];
+		let secondaryViewSelections = viewSelections.slice(1);
+
+		let e:EditorCommon.ICursorSelectionChangedEvent = {
 			selection: primarySelection,
+			viewSelection: primaryViewSelection,
 			secondarySelections: secondarySelections,
+			secondaryViewSelections: secondaryViewSelections,
 			source: source,
 			reason: reason
 		};
@@ -1294,8 +1300,9 @@ export class Cursor extends EventEmitter {
 	}
 
 	private _replacePreviousChar(ctx: IMultipleCursorOperationContext): boolean {
-		var text = ctx.eventData.text;
-		return this._invokeForAll(ctx,(cursorIndex, oneCursor, oneCtx) => OneCursorOp.replacePreviousChar(oneCursor, text, oneCtx));
+		let text = ctx.eventData.text;
+		let replaceCharCnt = ctx.eventData.replaceCharCnt;
+		return this._invokeForAll(ctx,(cursorIndex, oneCursor, oneCtx) => OneCursorOp.replacePreviousChar(oneCursor, text, replaceCharCnt, oneCtx));
 
 	}
 
@@ -1322,19 +1329,13 @@ export class Cursor extends EventEmitter {
 	}
 
 	private _scrollUp(isPaged: boolean, ctx: IMultipleCursorOperationContext): boolean {
-		if (this.configuration.editor.moveCursorWhenScrolling) {
-			if (!this._moveUp(false, isPaged, ctx)) {
-				return false;
-			}
-		}
 		ctx.requestScrollDeltaLines = isPaged ? -this.configuration.editor.pageSize : -1;
+		return true;
 	}
 
 	private _scrollDown(isPaged: boolean, ctx: IMultipleCursorOperationContext): boolean {
-		if (this.configuration.editor.moveCursorWhenScrolling) {
-			if (!this._moveDown(false, isPaged, ctx)) return false;
-		}
 		ctx.requestScrollDeltaLines = isPaged ? this.configuration.editor.pageSize : 1;
+		return true;
 	}
 
 	private _distributePasteToCursors(ctx: IMultipleCursorOperationContext): string[] {

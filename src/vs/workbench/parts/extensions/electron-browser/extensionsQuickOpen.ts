@@ -3,33 +3,33 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import 'vs/css!./extensions';
+import 'vs/css!./media/extensions';
 
 import nls = require('vs/nls');
 import { IDisposable, disposeAll } from 'vs/base/common/lifecycle';
 import { TPromise } from 'vs/base/common/winjs.base';
+import { isNumber } from 'vs/base/common/types';
 import * as dom from 'vs/base/browser/dom';
+import Severity from 'vs/base/common/severity';
 import { onUnexpectedError } from 'vs/base/common/errors';
-import { Mode, IModel, IDataSource, IRenderer, IRunner, IFilter, IContext } from 'vs/base/parts/quickopen/browser/quickOpen';
+import { IAutoFocus, Mode, IModel, IDataSource, IRenderer, IRunner, IFilter, IContext } from 'vs/base/parts/quickopen/common/quickOpen';
 import { since } from 'vs/base/common/dates';
 import { matchesContiguousSubString } from 'vs/base/common/filters';
 import { QuickOpenHandler } from 'vs/workbench/browser/quickopen';
-import { IAutoFocus } from 'vs/base/parts/quickopen/browser/quickOpen';
 import { IHighlight } from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import { IExtensionsService, IGalleryService, IExtension } from 'vs/workbench/parts/extensions/common/extensions';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { InstallAction, UninstallAction } from 'vs/workbench/parts/extensions/electron-browser/extensionsActions';
 import { IMessageService } from 'vs/platform/message/common/message';
-import { IWorkspaceContextService } from 'vs/workbench/services/workspace/common/contextService';
-import Severity from 'vs/base/common/severity';
-import { IQuickOpenService } from 'vs/workbench/services/quickopen/browser/quickOpenService';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
-import { ReloadWindowAction } from 'vs/workbench/electron-browser/actions';
+import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { IWorkspaceContextService } from 'vs/workbench/services/workspace/common/contextService';
+import { IQuickOpenService } from 'vs/workbench/services/quickopen/common/quickOpenService';
 import { HighlightedLabel } from 'vs/base/browser/ui/highlightedlabel/highlightedLabel';
 import { Action } from 'vs/base/common/actions';
 import * as semver from 'semver';
 import { ActionBar } from 'vs/base/browser/ui/actionbar/actionbar';
-import remote = require('remote');
-const shell = remote.require('shell');
+import { shell } from 'electron';
+
 const $ = dom.emmet;
 
 const InstallLabel = nls.localize('install', "Install Extension");
@@ -57,7 +57,7 @@ interface ITemplateData {
 	root: HTMLElement;
 	displayName: HighlightedLabel;
 	version: HTMLElement;
-	since: HTMLElement;
+	installCount: HTMLElement;
 	author: HTMLElement;
 	actionbar: ActionBar;
 	description: HighlightedLabel;
@@ -80,9 +80,22 @@ function extensionEquals(one: IExtension, other: IExtension): boolean {
 	return one.publisher === other.publisher && one.name === other.name;
 }
 
+function extensionEntryCompare(one: IExtensionEntry, other: IExtensionEntry): number {
+	const oneInstallCount = one.extension.galleryInformation ? one.extension.galleryInformation.installCount : 0;
+	const otherInstallCount = other.extension.galleryInformation ? other.extension.galleryInformation.installCount : 0;
+	const diff = otherInstallCount - oneInstallCount;
+
+	if (diff !== 0) {
+		return diff;
+	}
+
+	return one.extension.displayName.localeCompare(other.extension.displayName);
+}
+
 class OpenInGalleryAction extends Action {
 
 	constructor(
+		private promptToInstall: boolean,
 		@IMessageService protected messageService: IMessageService,
 		@IWorkspaceContextService private contextService: IWorkspaceContextService,
 		@IInstantiationService protected instantiationService: IInstantiationService
@@ -93,6 +106,10 @@ class OpenInGalleryAction extends Action {
 	public run(extension: IExtension): TPromise<any> {
 		const url = `${this.contextService.getConfiguration().env.extensionsGallery.itemUrl}/${ extension.publisher }.${ extension.name }`;
 		shell.openExternal(url);
+
+		if (!this.promptToInstall) {
+			return TPromise.as(null);
+		}
 
 		const hideMessage = this.messageService.show(Severity.Info, {
 			message: nls.localize('installPrompt', "Would you like to install '{0}'?", extension.displayName),
@@ -116,110 +133,6 @@ class OpenInGalleryAction extends Action {
 		});
 
 		return TPromise.as(null);
-	}
-}
-
-class InstallAction extends Action {
-
-	constructor(
-		label: string,
-		@IQuickOpenService protected quickOpenService: IQuickOpenService,
-		@IExtensionsService protected extensionsService: IExtensionsService,
-		@IMessageService protected messageService: IMessageService,
-		@ITelemetryService protected telemetryService: ITelemetryService,
-		@IInstantiationService protected instantiationService: IInstantiationService
-	) {
-		super('extensions.install', label, 'octicon octicon-cloud-download', true);
-	}
-
-	public run(extension: IExtension): TPromise<any> {
-		this.enabled = false;
-
-		return this.extensionsService
-			.install(extension)
-			.then(() => this.onSuccess(extension), err => this.onError(err, extension))
-			.then(() => this.enabled = true)
-			.then(() => null);
-	}
-
-	private onSuccess(extension: IExtension) {
-		this.reportTelemetry(extension, true);
-		this.messageService.show(
-			Severity.Info,
-			{
-				message: nls.localize('success', "{0} {1} was successfully installed. Restart to enable it.", extension.displayName, extension.version),
-				actions: [this.instantiationService.createInstance(ReloadWindowAction, ReloadWindowAction.ID, nls.localize('restartNow', "Restart Now"))]
-			}
-		);
-	}
-
-	private onError(err: Error, extension: IExtension) {
-		this.reportTelemetry(extension, false);
-		this.messageService.show(Severity.Error, err);
-	}
-
-	private reportTelemetry(extension: IExtension, success: boolean) {
-		this.telemetryService.publicLog('extensionGallery:install', {
-			success,
-			id: extension.galleryInformation ? extension.galleryInformation.id : null,
-			name: extension.name,
-			publisherId: extension.galleryInformation ? extension.galleryInformation.publisherId : null,
-			publisherName: extension.publisher,
-			publisherDisplayName: extension.galleryInformation ? extension.galleryInformation.publisherDisplayName : null
-		});
-	}
-}
-
-class UninstallAction extends Action {
-
-	constructor(
-		@IQuickOpenService protected quickOpenService: IQuickOpenService,
-		@IExtensionsService protected extensionsService: IExtensionsService,
-		@IMessageService protected messageService: IMessageService,
-		@ITelemetryService protected telemetryService: ITelemetryService,
-		@IInstantiationService protected instantiationService: IInstantiationService
-	) {
-		super('extensions.uninstall', nls.localize('uninstall', "Uninstall Extension"), 'octicon octicon-x', true);
-	}
-
-	public run(extension: IExtension): TPromise<any> {
-		if (!window.confirm(nls.localize('deleteSure', "Are you sure you want to uninstall the '{0}' extension?", extension.displayName))) {
-			return TPromise.as(null);
-		}
-
-		this.enabled = false;
-
-		return this.extensionsService.uninstall(extension)
-			.then(() => this.onSuccess(extension), err => this.onError(err, extension))
-			.then(() => this.enabled = true)
-			.then(() => null);
-	}
-
-	private onSuccess(extension: IExtension) {
-		this.reportTelemetry(extension, true);
-		this.messageService.show(
-			Severity.Info,
-			{
-				message: nls.localize('success', "{0} was successfully uninstalled. Restart to deactivate it.", extension.displayName),
-				actions: [this.instantiationService.createInstance(ReloadWindowAction, ReloadWindowAction.ID, nls.localize('restartNow2', "Restart Now"))]
-			}
-		);
-	}
-
-	private onError(err: Error, extension: IExtension) {
-		this.reportTelemetry(extension, false);
-		this.messageService.show(Severity.Error, err);
-	}
-
-	private reportTelemetry(extension: IExtension, success: boolean) {
-		this.telemetryService.publicLog('extensionGallery:uninstall', {
-			success,
-			id: extension.galleryInformation ? extension.galleryInformation.id : null,
-			name: extension.name,
-			publisherId: extension.galleryInformation ? extension.galleryInformation.publisherId : null,
-			publisherName: extension.publisher,
-			publisherDisplayName: extension.galleryInformation ? extension.galleryInformation.publisherDisplayName : null
-		});
 	}
 }
 
@@ -265,19 +178,22 @@ class Renderer implements IRenderer<IExtensionEntry> {
 	}
 
 	renderTemplate(templateId: string, container: HTMLElement): ITemplateData {
+		// Important to preserve order here.
 		const root = dom.append(container, $('.extension'));
 		const firstRow = dom.append(root, $('.row'));
 		const secondRow = dom.append(root, $('.row'));
 		const published = dom.append(firstRow, $('.published'));
-		const since = dom.append(published, $('span.since'));
+		const displayName = new HighlightedLabel(dom.append(firstRow, $('span.name')));
+		const installCount = dom.append(firstRow, $('span.installCount'));
+		const version = dom.append(published, $('span.version'));
 		const author = dom.append(published, $('span.author'));
 
 		return {
 			root,
 			author,
-			since,
-			displayName: new HighlightedLabel(dom.append(firstRow, $('span.name'))),
-			version: dom.append(firstRow, $('span.version')),
+			displayName,
+			version,
+			installCount,
 			actionbar: new ActionBar(dom.append(secondRow, $('.actions'))),
 			description: new HighlightedLabel(dom.append(secondRow, $('span.description'))),
 			disposables: []
@@ -288,13 +204,14 @@ class Renderer implements IRenderer<IExtensionEntry> {
 		const extension = entry.extension;
 		const date = extension.galleryInformation ? extension.galleryInformation.date : null;
 		const publisher = extension.galleryInformation ? extension.galleryInformation.publisherDisplayName : extension.publisher;
+		const installCount = extension.galleryInformation ? extension.galleryInformation.installCount : null;
 		const actionOptions = { icon: true, label: false };
 
 		const updateActions = () => {
 			data.actionbar.clear();
 
 			if (entry.extension.galleryInformation) {
-				data.actionbar.push(this.instantiationService.createInstance(OpenInGalleryAction), { label: true, icon: false });
+				data.actionbar.push(this.instantiationService.createInstance(OpenInGalleryAction, entry.state !== ExtensionState.Installed), { label: true, icon: false });
 			}
 
 			switch (entry.state) {
@@ -328,8 +245,27 @@ class Renderer implements IRenderer<IExtensionEntry> {
 		data.disposables.push(this.extensionsService.onDidUninstallExtension(e => onExtensionStateChange(e, ExtensionState.Uninstalled)));
 
 		data.displayName.set(extension.displayName, entry.highlights.displayName);
+		data.displayName.element.title = extension.name;
 		data.version.textContent = extension.version;
-		data.since.textContent = date ? since(new Date(date)) : '';
+
+		if (isNumber(installCount)) {
+			data.installCount.textContent = String(installCount);
+			dom.addClass(data.installCount, 'octicon');
+			dom.addClass(data.installCount, 'octicon-cloud-download');
+
+			if (!installCount) {
+				data.installCount.title = nls.localize('installCountZero', "{0} wasn't downloaded yet.", extension.displayName);
+			} else if (installCount === 1) {
+				data.installCount.title = nls.localize('installCountOne', "{0} was downloaded once.", extension.displayName);
+			} else {
+				data.installCount.title = nls.localize('installCountMultiple', "{0} was downloaded {1} times.", extension.displayName, installCount);
+			}
+		} else {
+			data.installCount.textContent = '';
+			dom.removeClass(data.installCount, 'octicon');
+			dom.removeClass(data.installCount, 'octicon-cloud-download');
+		}
+
 		data.author.textContent = publisher;
 		data.description.set(extension.description, entry.highlights.description);
 		data.description.element.title = extension.description;
@@ -347,11 +283,15 @@ class DataSource implements IDataSource<IExtensionEntry> {
 	getId(entry: IExtensionEntry): string {
 		const extension = entry.extension;
 
-		if (extension.galleryInformation) {
-			return extension.galleryInformation.id;
+		if (!extension) {
+			throw new Error(`Not an extension entry. Found ${ Object.keys(entry).slice(5) },... instead.`);
 		}
 
-		return `local@${ extension.publisher }.${extension.name}@${ extension.path || '' }`;
+		if (extension.galleryInformation) {
+			return `${ extension.galleryInformation.id }-${ extension.version }`;
+		}
+
+		return `local@${ extension.publisher }.${ extension.name }-${ extension.version }@${ extension.path || '' }`;
 	}
 
 	getLabel(entry: IExtensionEntry): string {
@@ -383,7 +323,7 @@ class LocalExtensionsModel implements IModel<IExtensionEntry> {
 				highlights,
 				state: ExtensionState.Installed
 			}))
-			.sort((a, b) => a.extension.name.localeCompare(b.extension.name));
+			.sort(extensionEntryCompare);
 	}
 }
 
@@ -456,7 +396,7 @@ class GalleryExtensionsModel implements IModel<IExtensionEntry> {
 						: ExtensionState.Uninstalled
 				};
 			})
-			.sort((a, b) => a.extension.name.localeCompare(b.extension.name));
+			.sort(extensionEntryCompare);
 	}
 }
 
@@ -528,7 +468,7 @@ class OutdatedExtensionsModel implements IModel<IExtensionEntry> {
 				highlights,
 				state: ExtensionState.Outdated
 			}))
-			.sort((a, b) => a.extension.name.localeCompare(b.extension.name));
+			.sort(extensionEntryCompare);
 	}
 }
 

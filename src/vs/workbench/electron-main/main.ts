@@ -5,10 +5,8 @@
 
 'use strict';
 
-import app = require('app');
+import {app, shell, dialog} from 'electron';
 import fs = require('fs');
-import dialog = require('dialog');
-import shell = require('shell');
 import nls = require('vs/nls');
 import {assign} from 'vs/base/common/objects';
 import platform = require('vs/base/common/platform');
@@ -23,7 +21,7 @@ import {getUserEnvironment} from 'vs/base/node/env';
 import {Promise, TPromise} from 'vs/base/common/winjs.base';
 import {GitAskpassService} from 'vs/workbench/parts/git/electron-main/askpassService';
 import {spawnSharedProcess} from 'vs/workbench/electron-main/sharedProcess';
-import { Mutex } from 'windows-mutex';
+import {Mutex} from 'windows-mutex';
 
 export class LaunchService {
 	public start(args: env.ICommandLineArguments, userEnv: env.IProcessEnvironment): Promise {
@@ -69,7 +67,7 @@ function quit(message?: string);
 function quit(arg?: any) {
 	let exitCode = 0;
 	if (typeof arg === 'string') {
-		env.log(arg)
+		env.log(arg);
 	} else {
 		exitCode = 1; // signal error to the outside
 		if (arg.stack) {
@@ -82,7 +80,6 @@ function quit(arg?: any) {
 	process.exit(exitCode);
 }
 
-
 function main(ipcServer: Server, userEnv: env.IProcessEnvironment): void {
 	env.log('### VSCode main.js ###');
 	env.log(env.appRoot, env.cliArgs);
@@ -90,8 +87,8 @@ function main(ipcServer: Server, userEnv: env.IProcessEnvironment): void {
 	// Setup Windows mutex
 	let windowsMutex: Mutex = null;
 	try {
-		var Mutex = (<any> require.__$__nodeRequire('windows-mutex')).Mutex;
-		windowsMutex = new Mutex('vscode');
+		const Mutex = (<any>require.__$__nodeRequire('windows-mutex')).Mutex;
+		windowsMutex = new Mutex(env.product.win32MutexName);
 	} catch (e) {
 		// noop
 	}
@@ -129,7 +126,9 @@ function main(ipcServer: Server, userEnv: env.IProcessEnvironment): void {
 		}
 
 		sharedProcess.kill();
-		windowsMutex && windowsMutex.release();
+		if (windowsMutex) {
+			windowsMutex.release();
+		}
 	});
 
 	// Lifecycle

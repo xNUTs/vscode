@@ -10,14 +10,13 @@ import Errors = require('vs/base/common/errors');
 import EditorCommon = require('vs/editor/common/editorCommon');
 import QuickOpenWidget = require('vs/base/parts/quickopen/browser/quickOpenWidget');
 import QuickOpenModel = require('vs/base/parts/quickopen/browser/quickOpenModel');
-import QuickOpen = require('vs/base/parts/quickopen/browser/quickOpen');
+import QuickOpen = require('vs/base/parts/quickopen/common/quickOpen');
 import Strings = require('vs/base/common/strings');
 import Actions = require('vs/base/common/actions');
 import Filters = require('vs/base/common/filters');
 import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
 import {EditorAction, Behaviour} from 'vs/editor/common/editorAction';
 import EditorQuickOpen = require('./editorQuickOpen');
-import {KeybindingsUtils} from 'vs/platform/keybinding/common/keybindingsUtils';
 import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
 
 export class EditorActionCommandEntry extends QuickOpenModel.QuickOpenEntryGroup {

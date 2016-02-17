@@ -53,11 +53,11 @@ import { IJSONSchema } from 'vs/base/common/jsonSchema';
 
 import { IWorkbenchContribution, IWorkbenchContributionsRegistry, Extensions as WorkbenchExtensions } from 'vs/workbench/common/contributions';
 
-import workbenchActionRegistry = require('vs/workbench/browser/actionRegistry');
+import workbenchActionRegistry = require('vs/workbench/common/actionRegistry');
 import statusbar = require('vs/workbench/browser/parts/statusbar/statusbar');
 import QuickOpen = require('vs/workbench/browser/quickopen');
 
-import { IQuickOpenService } from 'vs/workbench/services/quickopen/browser/quickOpenService';
+import { IQuickOpenService } from 'vs/workbench/services/quickopen/common/quickOpenService';
 import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { IWorkspaceContextService } from 'vs/workbench/services/workspace/common/contextService';
 
@@ -214,7 +214,7 @@ class ConfigureTaskRunnerAction extends Action {
 					forceOpen: true
 				}
 			}, sideBySide).then((value) => {
-				this.outputService.showOutput(TaskService.OutputChannel, true, true);
+				this.outputService.showOutput(TaskService.OutputChannel, true);
 				return value;
 			});
 		}, (error) => {
@@ -460,6 +460,7 @@ class TaskService extends EventEmitter implements ITaskService {
 	private _taskSystemPromise: TPromise<ITaskSystem>;
 	private _taskSystem: ITaskSystem;
 	private taskSystemListeners: ListenerUnbind[];
+	private clearTaskSystemPromise: boolean;
 
 	private fileChangesListener: ListenerUnbind;
 
@@ -487,10 +488,15 @@ class TaskService extends EventEmitter implements ITaskService {
 		this.pluginService = pluginService;
 
 		this.taskSystemListeners = [];
+		this.clearTaskSystemPromise = false;
 		this.configurationService.addListener(ConfigurationServiceEventTypes.UPDATED, () => {
 			this.emit(TaskServiceEvents.ConfigChanged);
-			this._taskSystem = null;
-			this._taskSystemPromise = null;
+			if (this._taskSystem && this._taskSystem.isActiveSync()) {
+				this.clearTaskSystemPromise = true;
+			} else {
+				this._taskSystem = null;
+				this._taskSystemPromise = null;
+			}
 			this.disposeTaskSystemListeners();
 		});
 
@@ -502,7 +508,7 @@ class TaskService extends EventEmitter implements ITaskService {
 		this.taskSystemListeners = [];
 	}
 
-	private disposeFleChangesListener(): void {
+	private disposeFileChangesListener(): void {
 		if (this.fileChangesListener) {
 			this.fileChangesListener();
 			this.fileChangesListener = null;
@@ -525,7 +531,7 @@ class TaskService extends EventEmitter implements ITaskService {
 					}
 					if (isAffected) {
 						this.outputService.append(TaskService.OutputChannel, nls.localize('TaskSystem.invalidTaskJson', 'Error: The content of the tasks.json file has syntax errors. Please correct them before executing a task.\n'));
-						this.outputService.showOutput(TaskService.OutputChannel, true, true);
+						this.outputService.showOutput(TaskService.OutputChannel, true);
 						return TPromise.wrapError({});
 					}
 				}
@@ -599,7 +605,7 @@ class TaskService extends EventEmitter implements ITaskService {
 				result = false;
 				this.outputService.append(TaskService.OutputChannel, line + '\n');
 			});
-			this.outputService.showOutput(TaskService.OutputChannel, true, true);
+			this.outputService.showOutput(TaskService.OutputChannel, true);
 		}
 		return result;
 	}
@@ -664,7 +670,13 @@ class TaskService extends EventEmitter implements ITaskService {
 							}
 						});
 					}
-					return runResult.promise;
+					return runResult.promise.then((value) => {
+						if (this.clearTaskSystemPromise) {
+							this._taskSystemPromise = null;
+							this.clearTaskSystemPromise = false;
+						}
+						return value;
+					});
 				}, (err: any) => {
 					this.handleError(err);
 				});
@@ -684,8 +696,12 @@ class TaskService extends EventEmitter implements ITaskService {
 					return taskSystem.terminate();
 				}).then(response => {
 					if (response.success) {
+						if (this.clearTaskSystemPromise) {
+							this._taskSystemPromise = null;
+							this.clearTaskSystemPromise = false;
+						}
 						this.emit(TaskServiceEvents.Terminated, {});
-						this.disposeFleChangesListener();
+						this.disposeFileChangesListener();
 					}
 					return response;
 				});
@@ -699,15 +715,15 @@ class TaskService extends EventEmitter implements ITaskService {
 
 	public beforeShutdown(): boolean | TPromise<boolean> {
 		if (this._taskSystem && this._taskSystem.isActiveSync()) {
-			if (this.messageService.confirm({
+			if (this._taskSystem.canAutoTerminate() || this.messageService.confirm({
 				message: nls.localize('TaskSystem.runningTask', 'There is a task running. Do you want to terminate it?'),
-				primaryButton: nls.localize('TaskSystem.terminateTask', "Terminate Task")
+				primaryButton: nls.localize('TaskSystem.terminateTask', "&&Terminate Task")
 			})) {
 				return this._taskSystem.terminate().then((response) => {
 					if (response.success) {
 						this.emit(TaskServiceEvents.Terminated, {});
 						this._taskSystem = null;
-						this.disposeFleChangesListener();
+						this.disposeFileChangesListener();
 						this.disposeTaskSystemListeners();
 						return false; // no veto
 					}
@@ -745,7 +761,7 @@ class TaskService extends EventEmitter implements ITaskService {
 			this.messageService.show(Severity.Error, nls.localize('TaskSystem.unknownError', 'An error has occurred while running a task. See task log for details.'));
 		}
 		if (showOutput) {
-			this.outputService.showOutput(TaskService.OutputChannel, false, true);
+			this.outputService.showOutput(TaskService.OutputChannel, true);
 		}
 	}
 }
@@ -798,7 +814,7 @@ if (Env.enableTasks) {
 	(<IWorkbenchContributionsRegistry>Registry.as(WorkbenchExtensions.Workbench)).registerWorkbenchContribution(TaskServiceParticipant);
 
 	// tasks.json validation
-	let schemaId = 'local://schemas/tasks';
+	let schemaId = 'vscode://schemas/tasks';
 	let schema : IJSONSchema =
 		{
 			'id': schemaId,
@@ -954,6 +970,11 @@ if (Env.enableTasks) {
 							'enum': ['error', 'warning', 'info'],
 							'description': nls.localize('JsonSchema.problemMatcher.severity', 'The default severity for captures problems. Is used if the pattern doesn\' define a match group for severity.')
 						},
+						'applyTo': {
+							'type': 'string',
+							'enum': ['allDocuments', 'openDocuments', 'closedDocuments'],
+							'description': nls.localize('JsonSchema.problemMatcher.applyTo', 'Controls if a problem reported on a text document is applied only to open, closed or all documents.')
+						},
 						'pattern': {
 							'$ref': '#/definitions/patternType',
 							'description': nls.localize('JsonSchema.problemMatcher.pattern', 'A problem pattern or the name of a predefined problem pattern. Can be omitted if base is specified.')
@@ -1059,6 +1080,11 @@ if (Env.enableTasks) {
 							'type': 'boolean',
 							'description': nls.localize('JsonSchema.watching', 'Whether the executed task is kept alive and is watching the file system.'),
 							'default': true
+						},
+						'promptOnClose': {
+							'type': 'boolean',
+							'description': nls.localize('JsonSchema.promptOnClose', 'Whether the user is prompted when VS Code closes with a running background task.'),
+							'default': false
 						},
 						'echoCommand': {
 							'type': 'boolean',

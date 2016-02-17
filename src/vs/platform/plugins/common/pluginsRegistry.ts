@@ -150,6 +150,10 @@ export function isValidPluginDescription(extensionFolderPath: string, pluginDesc
 		notices.push(nls.localize('pluginDescription.name', "property `{0}` is mandatory and must be of type `string`", 'name'));
 		return false;
 	}
+	if (typeof pluginDescription.version !== 'string') {
+		notices.push(nls.localize('pluginDescription.version', "property `{0}` is mandatory and must be of type `string`", 'version'));
+		return false;
+	}
 	if (!pluginDescription.engines) {
 		notices.push(nls.localize('pluginDescription.engines', "property `{0}` is mandatory and must be of type `object`", 'engines'));
 		return false;
@@ -313,7 +317,7 @@ class PluginsRegistryImpl implements IPluginsRegistry {
 		let result = new ExtensionPoint<T>(extensionPoint, this);
 		this._extensionPoints[extensionPoint] = result;
 
-		(<any>schema).properties.contributes.properties[extensionPoint] = jsonSchema;
+		schema.properties['contributes'].properties[extensionPoint] = jsonSchema;
 		schemaRegistry.registerSchema(schemaId, schema);
 
 		return result;
@@ -435,7 +439,7 @@ var Extensions = {
 Registry.add(Extensions.PluginsRegistry, new PluginsRegistryImpl());
 export var PluginsRegistry:IPluginsRegistry = Registry.as(Extensions.PluginsRegistry);
 
-var schemaId = 'local://schemas/vscode-extension';
+var schemaId = 'vscode://schemas/vscode-extensions';
 var schema : IJSONSchema = {
 	default: {
 		'name': '{{name}}',

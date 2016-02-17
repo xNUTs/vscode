@@ -277,6 +277,7 @@ export class HTMLMode<W extends htmlWorker.HTMLWorker> extends AbstractMode<W> i
 	public characterPairSupport: Modes.ICharacterPairSupport;
 
 	public extraInfoSupport:Modes.IExtraInfoSupport;
+	public occurrencesSupport:Modes.IOccurrencesSupport;
 	public referenceSupport: Modes.IReferenceSupport;
 	public logicalSelectionSupport: Modes.ILogicalSelectionSupport;
 	public formattingSupport: Modes.IFormattingSupport;
@@ -311,6 +312,7 @@ export class HTMLMode<W extends htmlWorker.HTMLWorker> extends AbstractMode<W> i
 
 		this.formattingSupport = this;
 		this.extraInfoSupport = this;
+		this.occurrencesSupport = this;
 		this.referenceSupport = new supports.ReferenceSupport(this, {
 			tokens: ['invalid'],
 			findReferences: (resource, position, includeDeclaration) => this.findReferences(resource, position, includeDeclaration)});
@@ -452,11 +454,6 @@ export class HTMLMode<W extends htmlWorker.HTMLWorker> extends AbstractMode<W> i
 
 	protected _getWorkerDescriptor(): AsyncDescriptor2<Modes.IMode, Modes.IWorkerParticipant[], htmlWorker.HTMLWorker> {
 		return createAsyncDescriptor2('vs/languages/html/common/htmlWorker', 'HTMLWorker');
-	}
-
-	static $formatDocument = OneWorkerAttr(HTMLMode, HTMLMode.prototype.formatDocument);
-	public formatDocument(resource:URI, options:Modes.IFormattingOptions):winjs.TPromise<EditorCommon.ISingleEditOperation[]> {
-		return this._worker((w) => w.format(resource, null, options));
 	}
 
 	static $formatRange = OneWorkerAttr(HTMLMode, HTMLMode.prototype.formatRange);
