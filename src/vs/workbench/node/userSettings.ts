@@ -13,7 +13,6 @@ import json = require('vs/base/common/json');
 import objects = require('vs/base/common/objects');
 import {TPromise} from 'vs/base/common/winjs.base';
 import Event, {Emitter} from 'vs/base/common/event';
-import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 
 export interface ISettings {
 	settings: any;
@@ -42,10 +41,11 @@ export class UserSettings {
 		this.registerWatchers();
 	}
 
-	public static getValue(contextService: IWorkspaceContextService, key: string, fallback?: any): TPromise<any> {
-		return new TPromise((c, e) => {
-			const appSettingsPath = contextService.getConfiguration().env.appSettingsPath;
+	public static getValue(userDataPath: string, key: string, fallback?: any): TPromise<any> {
+		// TODO@joao cleanup!
+		const appSettingsPath = path.join(userDataPath, 'User', 'settings.json');
 
+		return new TPromise((c, e) => {
 			fs.readFile(appSettingsPath, (error /* ignore */, fileContents) => {
 				let root = Object.create(null);
 				let content = fileContents ? fileContents.toString() : '{}';
@@ -100,7 +100,7 @@ export class UserSettings {
 		// we can get multiple change events for one change, so we buffer through a timeout
 		if (this.timeoutHandle) {
 			global.clearTimeout(this.timeoutHandle);
-			delete this.timeoutHandle;
+			this.timeoutHandle = null;
 		}
 
 		this.timeoutHandle = global.setTimeout(() => {

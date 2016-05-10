@@ -19,7 +19,9 @@ import {IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
 import {QuickOpenEntry, QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import {QuickOpenHandler} from 'vs/workbench/browser/quickopen';
 import {FileEntry, OpenFileHandler} from 'vs/workbench/parts/search/browser/openFileHandler';
+/* tslint:disable:no-unused-variable */
 import * as openSymbolHandler from 'vs/workbench/parts/search/browser/openSymbolHandler';
+/* tslint:enable:no-unused-variable */
 import {IMessageService, Severity} from 'vs/platform/message/common/message';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
@@ -34,7 +36,7 @@ interface ISearchWithRange {
 export import OpenSymbolHandler = openSymbolHandler.OpenSymbolHandler;
 
 export class OpenAnythingHandler extends QuickOpenHandler {
-	private static LINE_COLON_PATTERN = /[#|:](\d*)([#|:](\d*))?$/;
+	private static LINE_COLON_PATTERN = /[#|:|\(](\d*)([#|:|,](\d*))?\)?$/;
 
 	private static SYMBOL_SEARCH_INITIAL_TIMEOUT = 500; // Ignore symbol search after a timeout to not block search results
 	private static SYMBOL_SEARCH_SUBSEQUENT_TIMEOUT = 100;
@@ -70,7 +72,7 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 	}
 
 	public getResults(searchValue: string): TPromise<QuickOpenModel> {
-		searchValue = searchValue.trim();
+		searchValue = searchValue.replace(/ /g, ''); // get rid of all whitespace
 
 		// Help Windows users to search for paths when using slash
 		if (isWindows) {
@@ -239,6 +241,9 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 	}
 
 	public getResultsFromCache(searchValue: string, range: IRange = null): QuickOpenEntry[] {
+		if (paths.isAbsolute(searchValue)) {
+			return null; // bypass cache if user looks up an absolute path where matching goes directly on disk
+		}
 
 		// Find cache entries by prefix of search value
 		let cachedEntries: QuickOpenEntry[];

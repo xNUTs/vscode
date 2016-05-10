@@ -5,14 +5,11 @@
 
 'use strict';
 
-import {IParameterHintsSupport, IParameterHints} from 'vs/editor/common/modes';
-import {IModel, IPosition} from 'vs/editor/common/editorCommon';
-import {TPromise} from 'vs/base/common/winjs.base';
 import {illegalArgument} from 'vs/base/common/errors';
-import LanguageFeatureRegistry from 'vs/editor/common/modes/languageFeatureRegistry';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {IModel, IPosition} from 'vs/editor/common/editorCommon';
 import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
-
-export const ParameterHintsRegistry = new LanguageFeatureRegistry<IParameterHintsSupport>('parameterHintsSupport');
+import {IParameterHints, ParameterHintsRegistry} from 'vs/editor/common/modes';
 
 export function getParameterHints(model:IModel, position:IPosition, triggerCharacter: string): TPromise<IParameterHints> {
 

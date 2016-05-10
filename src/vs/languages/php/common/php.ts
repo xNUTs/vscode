@@ -10,37 +10,33 @@ import Modes = require('vs/editor/common/modes');
 import {AbstractMode, isDigit, createWordRegExp} from 'vs/editor/common/modes/abstractMode';
 import {AbstractState} from 'vs/editor/common/modes/abstractState';
 import {IModeService} from 'vs/editor/common/services/modeService';
-import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {IThreadService} from 'vs/platform/thread/common/thread';
-import {AbstractModeWorker} from 'vs/editor/common/modes/abstractModeWorker';
 import {RichEditSupport} from 'vs/editor/common/modes/supports/richEditSupport';
 import {TokenizationSupport, ILeavingNestedModeData, ITokenizationCustomization} from 'vs/editor/common/modes/supports/tokenizationSupport';
-import {SuggestSupport} from 'vs/editor/common/modes/supports/suggestSupport';
+import {TextualSuggestSupport} from 'vs/editor/common/modes/supports/suggestSupport';
+import {IEditorWorkerService} from 'vs/editor/common/services/editorWorkerService';
 
-var bracketsSource : Modes.IBracketPair[]= [
-	{ tokenType:'delimiter.bracket.php', open: '{', close: '}', isElectric: true },
-	{ tokenType:'delimiter.array.php', open: '[', close: ']', isElectric: true },
-	{ tokenType:'delimiter.parenthesis.php', open: '(', close: ')', isElectric: true }
-];
 
 var brackets = (function() {
+
+	let bracketsSource = [
+		{ tokenType:'delimiter.bracket.php', open: '{', close: '}' },
+		{ tokenType:'delimiter.array.php', open: '[', close: ']' },
+		{ tokenType:'delimiter.parenthesis.php', open: '(', close: ')' }
+	];
 
 	let MAP: {
 		[text:string]:{
 			tokenType: string;
-			bracketType: Modes.Bracket
 		}
 	} = Object.create(null);
 
 	for (let i = 0; i < bracketsSource.length; i++) {
 		let bracket = bracketsSource[i];
 		MAP[bracket.open] = {
-			tokenType: bracket.tokenType,
-			bracketType: Modes.Bracket.Open
+			tokenType: bracket.tokenType
 		};
 		MAP[bracket.close] = {
-			tokenType: bracket.tokenType,
-			bracketType: Modes.Bracket.Close
+			tokenType: bracket.tokenType
 		};
 	}
 
@@ -50,9 +46,6 @@ var brackets = (function() {
 		},
 		tokenTypeFromString: (text:string): string => {
 			return MAP[text].tokenType;
-		},
-		bracketTypeFromString: (text:string): Modes.Bracket => {
-			return MAP[text].bracketType;
 		}
 	};
 })();
@@ -75,7 +68,7 @@ var isKeyword = objects.createKeywordMatcher([
 	'try', 'true', 'use', 'var', 'while', 'xor',
 	'die', 'echo', 'empty', 'exit', 'eval',
 	'include', 'include_once', 'isset', 'list', 'require',
-	'require_once', 'return', 'print', 'unset',
+	'require_once', 'return', 'print', 'unset', 'yield',
 	'__construct'
 ]);
 
@@ -365,7 +358,7 @@ export class PHPStatement extends PHPState {
 			return { nextState: new PHPNumber(this.getMode(), this, stream.next()) };
 		}
 		if (stream.advanceIfString('?>').length) {
-			return { type: 'metatag.php', nextState: this.parent, bracket: Modes.Bracket.Close };
+			return { type: 'metatag.php', nextState: this.parent };
 		}
 
 		var token = stream.nextToken();
@@ -393,7 +386,6 @@ export class PHPStatement extends PHPState {
 			return { nextState: new PHPString(this.getMode(), this, token) };
 		} else if (brackets.stringIsBracket(token)) {
 			return {
-				bracket: brackets.bracketTypeFromString(token),
 				type: brackets.tokenTypeFromString(token)
 			};
 		} else if (isDelimiter(token)) {
@@ -428,8 +420,7 @@ export class PHPPlain extends PHPState {
 		stream.advanceIfString('<?').length || stream.advanceIfString('<%').length) {
 			return {
 				type: 'metatag.php',
-				nextState: new PHPStatement(this.getMode(), new PHPEnterHTMLState(this.getMode(), this.parent)),
-				bracket: Modes.Bracket.Open
+				nextState: new PHPStatement(this.getMode(), new PHPEnterHTMLState(this.getMode(), this.parent))
 			};
 		}
 		stream.next();
@@ -458,25 +449,25 @@ export class PHPEnterHTMLState extends PHPState {
 
 }
 
-export class PHPMode extends AbstractMode<AbstractModeWorker> implements ITokenizationCustomization {
+export class PHPMode extends AbstractMode implements ITokenizationCustomization {
 
 	public tokenizationSupport: Modes.ITokenizationSupport;
 	public richEditSupport: Modes.IRichEditSupport;
+	public suggestSupport:Modes.ISuggestSupport;
 
 	private modeService:IModeService;
 
 	constructor(
 		descriptor:Modes.IModeDescriptor,
-		@IInstantiationService instantiationService: IInstantiationService,
-		@IThreadService threadService: IThreadService,
-		@IModeService modeService: IModeService
+		@IModeService modeService: IModeService,
+		@IEditorWorkerService editorWorkerService: IEditorWorkerService
 	) {
-		super(descriptor, instantiationService, threadService);
+		super(descriptor.id);
 		this.modeService = modeService;
 
 		this.tokenizationSupport = new TokenizationSupport(this, this, true, false);
 
-		this.richEditSupport = new RichEditSupport(this.getId(), {
+		this.richEditSupport = new RichEditSupport(this.getId(), null, {
 			wordPattern: createWordRegExp('$_'),
 
 			comments: {
@@ -490,10 +481,6 @@ export class PHPMode extends AbstractMode<AbstractModeWorker> implements ITokeni
 				['(', ')']
 			],
 
-			__electricCharacterSupport: {
-				brackets: bracketsSource
-			},
-
 			__characterPairSupport: {
 				autoClosingPairs: [
 					{ open: '{', close: '}', notIn: ['string.php'] },
@@ -505,10 +492,9 @@ export class PHPMode extends AbstractMode<AbstractModeWorker> implements ITokeni
 			}
 		});
 
-		this.suggestSupport = new SuggestSupport(this.getId(), {
-			triggerCharacters: ['.', ':', '$'],
-			excludeTokens: ['comment'],
-			suggest: (resource, position) => this.suggest(resource, position)});
+		if (editorWorkerService) {
+			this.suggestSupport = new TextualSuggestSupport(this.getId(), editorWorkerService);
+		}
 	}
 
 	public asyncCtor(): WinJS.Promise {

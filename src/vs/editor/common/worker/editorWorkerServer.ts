@@ -5,31 +5,36 @@
 
 'use strict';
 
-// Require the modes worker since it is used in all workers to avoid rebundleing of the code with all worker
-import 'vs/editor/common/modes/abstractModeWorker';
 // include these in the editor bundle because they are widely used by many languages
 import 'vs/editor/common/languages.common';
-
-import {WorkerServer} from 'vs/base/common/worker/workerServer';
-import {MarkerService} from 'vs/platform/markers/common/markerService';
-import {WorkerThreadService} from 'vs/platform/thread/common/workerThreadService';
-import InstantiationService = require('vs/platform/instantiation/common/instantiationService');
-import {EventService} from 'vs/platform/event/common/eventService';
-import {WorkerTelemetryService} from 'vs/platform/telemetry/common/workerTelemetryService';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {ResourceService} from 'vs/editor/common/services/resourceServiceImpl';
-import {BaseWorkspaceContextService} from 'vs/platform/workspace/common/baseWorkspaceContextService';
-import {ModelServiceWorkerHelper} from 'vs/editor/common/services/modelServiceImpl';
-import {IPluginDescription} from 'vs/platform/plugins/common/plugins';
-import {PromiseSource} from 'vs/base/common/async';
-import {BaseRequestService} from 'vs/platform/request/common/baseRequestService';
-import {IWorkspace} from 'vs/platform/workspace/common/workspace';
-import {AbstractPluginService, ActivatedPlugin} from 'vs/platform/plugins/common/abstractPluginService';
-import {ModeServiceImpl,ModeServiceWorkerHelper} from 'vs/editor/common/services/modeServiceImpl';
+import 'vs/editor/common/worker/validationHelper';
 import Severity from 'vs/base/common/severity';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {WorkerServer} from 'vs/base/common/worker/workerServer';
+import {EventService} from 'vs/platform/event/common/eventService';
+import {IEventService} from 'vs/platform/event/common/event';
+import {AbstractExtensionService, ActivatedExtension} from 'vs/platform/extensions/common/abstractExtensionService';
+import {IExtensionDescription, IExtensionService} from 'vs/platform/extensions/common/extensions';
+import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
+import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
+import {SecondaryMarkerService} from 'vs/platform/markers/common/markerService';
+import {IMarkerService} from 'vs/platform/markers/common/markers';
+import {BaseRequestService} from 'vs/platform/request/common/baseRequestService';
+import {IRequestService} from 'vs/platform/request/common/request';
+import {RemoteTelemetryService} from 'vs/platform/telemetry/common/remoteTelemetryService';
+import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
+import {WorkerThreadService} from 'vs/platform/thread/common/workerThreadService';
+import {IThreadService} from 'vs/platform/thread/common/thread';
+import {BaseWorkspaceContextService} from 'vs/platform/workspace/common/baseWorkspaceContextService';
+import {IWorkspaceContextService, IWorkspace} from 'vs/platform/workspace/common/workspace';
+import {ModeServiceImpl, ModeServiceWorkerHelper} from 'vs/editor/common/services/modeServiceImpl';
+import {IModeService} from 'vs/editor/common/services/modeService';
+import {ModelServiceWorkerHelper} from 'vs/editor/common/services/modelServiceImpl';
+import {ResourceService} from 'vs/editor/common/services/resourceServiceImpl';
+import {IResourceService} from 'vs/editor/common/services/resourceService';
+
 
 export interface IInitData {
-	threadService:any;
 	contextService: {
 		workspace:any;
 		configuration:any;
@@ -49,7 +54,7 @@ export interface ICallback {
 	(something:any):void;
 }
 
-class WorkerPluginService extends AbstractPluginService<ActivatedPlugin> {
+class WorkerExtensionService extends AbstractExtensionService<ActivatedExtension> {
 
 	constructor() {
 		super(true);
@@ -71,15 +76,11 @@ class WorkerPluginService extends AbstractPluginService<ActivatedPlugin> {
 		}
 	}
 
-	public deactivate(pluginId:string): void {
-		// nothing to do
-	}
-
-	protected _createFailedPlugin(): ActivatedPlugin {
+	protected _createFailedExtension(): ActivatedExtension {
 		throw new Error('unexpected');
 	}
 
-	protected _actualActivatePlugin(pluginDescription: IPluginDescription): TPromise<ActivatedPlugin> {
+	protected _actualActivateExtension(extensionDescription: IExtensionDescription): TPromise<ActivatedExtension> {
 		throw new Error('unexpected');
 	}
 
@@ -94,54 +95,36 @@ export class EditorWorkerServer {
 
 	public initialize(mainThread:WorkerServer, complete:ICallback, error:ICallback, progress:ICallback, initData:IInitData):void {
 
-		var pluginService = new WorkerPluginService();
+		const services = new ServiceCollection();
 
-		var contextService = new BaseWorkspaceContextService(initData.contextService.workspace, initData.contextService.configuration, initData.contextService.options);
+		const extensionService = new WorkerExtensionService();
+		const contextService = new BaseWorkspaceContextService(initData.contextService.workspace, initData.contextService.configuration, initData.contextService.options);
+		this.threadService = new WorkerThreadService(mainThread.getRemoteCom());
+		this.threadService.setInstantiationService(new InstantiationService(new ServiceCollection([IThreadService, this.threadService])));
+		const telemetryServiceInstance = new RemoteTelemetryService('workerTelemetry', this.threadService);
+		const resourceService = new ResourceService();
+		const markerService = new SecondaryMarkerService(this.threadService);
+		const modeService = new ModeServiceImpl(this.threadService, extensionService);
+		const requestService = new BaseRequestService(contextService, telemetryServiceInstance);
 
-		this.threadService = new WorkerThreadService(initData.threadService, mainThread.getRemoteCom(), (messageName: string, payload: any) => {
-			return mainThread.request(messageName, payload);
-		});
-		this.threadService.setInstantiationService(InstantiationService.create({ threadService: this.threadService }));
+		services.set(IExtensionService, extensionService);
+		services.set(IThreadService, this.threadService);
+		services.set(IModeService, modeService);
+		services.set(IWorkspaceContextService, contextService);
+		services.set(IEventService, new EventService());
+		services.set(IResourceService, resourceService);
+		services.set(IMarkerService, markerService);
+		services.set(ITelemetryService, telemetryServiceInstance);
+		services.set(IRequestService, requestService);
 
-		var telemetryServiceInstance = new WorkerTelemetryService(this.threadService);
+		const instantiationService = new InstantiationService(services);
+		this.threadService.setInstantiationService(instantiationService);
 
-		var resourceService = new ResourceService();
-		var markerService = new MarkerService(this.threadService);
+		// Instantiate thread actors
+		this.threadService.getRemotable(ModeServiceWorkerHelper);
+		this.threadService.getRemotable(ModelServiceWorkerHelper);
 
-		var modeService = new ModeServiceImpl(this.threadService, pluginService);
-
-		var modesRegistryPromise = new PromiseSource();
-
-		var requestService = new BaseRequestService(contextService, telemetryServiceInstance);
-
-		var _services : any = {
-			threadService: this.threadService,
-			pluginService: pluginService,
-			modeService: modeService,
-			contextService: contextService,
-			eventService: new EventService(),
-			resourceService: resourceService,
-			markerService: markerService,
-			telemetryService: telemetryServiceInstance,
-			requestService: requestService
-		};
-
-		var servicePromise = TPromise.as(null);
-
-		servicePromise.then((_) => {
-
-			var instantiationService = InstantiationService.create(_services);
-			this.threadService.setInstantiationService(instantiationService);
-
-			// Instantiate thread actors
-			this.threadService.getRemotable(ModeServiceWorkerHelper);
-			this.threadService.getRemotable(ModelServiceWorkerHelper);
-
-			// Set to modes registry (ensure the synchronized object is constructed)
-			modesRegistryPromise.complete();
-
-			complete(undefined);
-		});
+		complete(undefined);
 	}
 
 	public request(mainThread:WorkerServer, complete:ICallback, error:ICallback, progress:ICallback, data:any):void {

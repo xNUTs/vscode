@@ -4,11 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import Strings = require('vs/base/common/strings');
-import Modes = require('vs/editor/common/modes');
-import {Arrays} from 'vs/editor/common/core/arrays';
+import * as strings from 'vs/base/common/strings';
+import * as objects from 'vs/base/common/objects';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {IModel, IPosition} from 'vs/editor/common/editorCommon';
+import * as modes from 'vs/editor/common/modes';
+import {ModeTransition} from 'vs/editor/common/core/modeTransition';
 
-export class Token implements Modes.IToken {
+export class Token implements modes.IToken {
+	_tokenBrand: void;
+
 	public startIndex:number;
 	public type:string;
 
@@ -22,13 +27,31 @@ export class Token implements Modes.IToken {
 	}
 }
 
-export function handleEvent<T>(context:Modes.ILineContext, offset:number, runner:(mode:Modes.IMode, newContext:Modes.ILineContext, offset:number)=>T):T {
+export class LineTokens implements modes.ILineTokens {
+	_lineTokensBrand: void;
+
+	tokens: Token[];
+	modeTransitions: ModeTransition[];
+	actualStopOffset: number;
+	endState: modes.IState;
+	retokenize: TPromise<void>;
+
+	constructor(tokens:Token[], modeTransitions: ModeTransition[], actualStopOffset:number, endState:modes.IState) {
+		this.tokens = tokens;
+		this.modeTransitions = modeTransitions;
+		this.actualStopOffset = actualStopOffset;
+		this.endState = endState;
+		this.retokenize = null;
+	}
+}
+
+export function handleEvent<T>(context:modes.ILineContext, offset:number, runner:(mode:modes.IMode, newContext:modes.ILineContext, offset:number)=>T):T {
 	var modeTransitions = context.modeTransitions;
 	if (modeTransitions.length === 1) {
 		return runner(modeTransitions[0].mode, context, offset);
 	}
 
-	var modeIndex = Arrays.findIndexInSegmentsArray(modeTransitions, offset);
+	var modeIndex = ModeTransition.findIndexInSegmentsArray(modeTransitions, offset);
 	var nestedMode = modeTransitions[modeIndex].mode;
 	var modeStartIndex = modeTransitions[modeIndex].startIndex;
 
@@ -55,7 +78,7 @@ export function handleEvent<T>(context:Modes.ILineContext, offset:number, runner
  * anywhereInToken is set to true in which case matches
  * happen on a substring at any position.
  */
-export function isLineToken(context:Modes.ILineContext, offset:number, types:string[], anywhereInToken:boolean = false):boolean {
+export function isLineToken(context:modes.ILineContext, offset:number, types:string[], anywhereInToken:boolean = false):boolean {
 
 	if (!Array.isArray(types) || types.length === 0) {
 		return false;
@@ -75,7 +98,7 @@ export function isLineToken(context:Modes.ILineContext, offset:number, types:str
 			}
 		}
 		else {
-			if (Strings.endsWith(type, types[i])) {
+			if (strings.endsWith(type, types[i])) {
 				return true;
 			}
 		}
@@ -84,24 +107,21 @@ export function isLineToken(context:Modes.ILineContext, offset:number, types:str
 	return false;
 }
 
-export class FilteredLineContext implements Modes.ILineContext {
+export class FilteredLineContext implements modes.ILineContext {
 
-	public modeTransitions: Modes.IModeTransition[];
+	public modeTransitions: ModeTransition[];
 
-	private _actual:Modes.ILineContext;
+	private _actual:modes.ILineContext;
 	private _firstTokenInModeIndex:number;
 	private _nextTokenAfterMode:number;
 	private _firstTokenCharacterOffset:number;
 	private _nextCharacterAfterModeIndex:number;
 
-	constructor(actual:Modes.ILineContext, mode:Modes.IMode,
+	constructor(actual:modes.ILineContext, mode:modes.IMode,
 			firstTokenInModeIndex:number, nextTokenAfterMode:number,
 			firstTokenCharacterOffset:number, nextCharacterAfterModeIndex:number) {
 
-		this.modeTransitions = [{
-			startIndex: 0,
-			mode: mode
-		}];
+		this.modeTransitions = [new ModeTransition(0, mode)];
 		this._actual = actual;
 		this._firstTokenInModeIndex = firstTokenInModeIndex;
 		this._nextTokenAfterMode = nextTokenAfterMode;
@@ -139,6 +159,98 @@ export class FilteredLineContext implements Modes.ILineContext {
 	}
 }
 
+const IGNORE_IN_TOKENS = /\b(comment|string|regex)\b/;
 export function ignoreBracketsInToken(tokenType:string): boolean {
-	return /\b(comment|string|regex)\b/.test(tokenType);
+	return IGNORE_IN_TOKENS.test(tokenType);
+}
+
+// TODO@Martin: find a better home for this code:
+// TODO@Martin: modify suggestSupport to return a boolean if snippets should be presented or not
+//       and turn this into a real registry
+export class SnippetsRegistry {
+
+	private static _defaultSnippets: { [modeId: string]: modes.ISuggestion[] } = Object.create(null);
+	private static _snippets: { [modeId: string]: { [path: string]: modes.ISuggestion[] } } = Object.create(null);
+
+	public static registerDefaultSnippets(modeId: string, snippets: modes.ISuggestion[]): void {
+		this._defaultSnippets[modeId] = (this._defaultSnippets[modeId] || []).concat(snippets);
+	}
+
+	public static registerSnippets(modeId: string, path: string, snippets: modes.ISuggestion[]): void {
+		let snippetsByMode = this._snippets[modeId];
+		if (!snippetsByMode) {
+			this._snippets[modeId] = snippetsByMode = {};
+		}
+		snippetsByMode[path] = snippets;
+	}
+
+	// the previous
+	private static getNonWhitespacePrefix(model: IModel, position: IPosition) {
+		let line = model.getLineContent(position.lineNumber);
+		let match = line.match(/[^\s]+$/);
+		if (match) {
+			return match[0];
+		}
+		return '';
+	}
+
+	public static getSnippets(model: IModel, position: IPosition): modes.ISuggestResult {
+		let word = model.getWordAtPosition(position);
+		let currentWord = word ? word.word.substring(0, position.column - word.startColumn).toLowerCase() : '';
+		let currentFullWord = SnippetsRegistry.getNonWhitespacePrefix(model, position).toLowerCase();
+		let result : modes.ISuggestResult = {
+			currentWord: currentWord,
+			suggestions: []
+		};
+
+		let modeId = model.getMode().getId();
+		let snippets : modes.ISuggestion[]= [];
+		let snipppetsByMode = this._snippets[modeId];
+		if (snipppetsByMode) {
+			for (let s in snipppetsByMode) {
+				snippets = snippets.concat(snipppetsByMode[s]);
+			}
+		}
+		let defaultSnippets = this._defaultSnippets[modeId];
+		if (defaultSnippets) {
+			snippets = snippets.concat(defaultSnippets);
+		}
+		// to avoid that snippets are too prominent in the intellisense proposals:
+		// enforce that current word is matched or the position is after a whitespace
+		snippets.forEach(p => {
+			if (currentWord.length === 0 && currentFullWord.length === 0) {
+				// if there's no prefix, only show snippets at the beginning of the line, or after a whitespace
+			} else {
+				let label = p.label.toLowerCase();
+				// force that the current word or full word matches with the snippet prefix
+				if (currentWord.length > 0 && strings.startsWith(label, currentWord)) {
+					// ok
+				} else if (currentFullWord.length > currentWord.length && strings.startsWith(label, currentFullWord)) {
+					p = objects.clone(p);
+					p.overwriteBefore = currentFullWord.length;
+				} else {
+					return;
+				}
+			}
+			result.suggestions.push(p);
+		});
+
+		// if (result.suggestions.length > 0) {
+		// 	if (word) {
+		// 		// Push also the current word as first suggestion, to avoid unexpected snippet acceptance on Enter.
+		// 		result.suggestions = result.suggestions.slice(0);
+		// 		result.suggestions.unshift({
+		// 			codeSnippet: word.word,
+		// 			label: word.word,
+		// 			type: 'text'
+		// 		});
+		// 	}
+		// 	result.incomplete = true;
+		// }
+
+		return result;
+
+	}
+
+
 }

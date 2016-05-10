@@ -4,37 +4,120 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import Lifecycle = require('vs/base/common/lifecycle');
-
+import {IDisposable} from 'vs/base/common/lifecycle';
+import * as editorCommon from 'vs/editor/common/editorCommon';
 import {LinesLayout} from 'vs/editor/common/viewLayout/linesLayout';
 import {ViewEventHandler} from 'vs/editor/common/viewModel/viewEventHandler';
 import {ScrollManager} from 'vs/editor/browser/viewLayout/scrollManager';
-import {EditorScrollable} from 'vs/editor/common/viewLayout/editorScrollable';
-import EditorBrowser = require('vs/editor/browser/editorBrowser');
-import EditorCommon = require('vs/editor/common/editorCommon');
+import {IViewModel} from 'vs/editor/common/viewModel/viewModel';
+import {ViewLinesViewportData} from 'vs/editor/common/viewLayout/viewLinesViewportData';
+import {IViewEventBus} from 'vs/editor/common/view/viewContext';
 
-export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDisposable, EditorBrowser.ILayoutProvider, EditorCommon.IWhitespaceManager {
+export interface IWhitespaceManager {
+	/**
+	 * Reserve rendering space.
+	 * @param height is specified in pixels.
+	 * @return an identifier that can be later used to remove or change the whitespace.
+	 */
+	addWhitespace(afterLineNumber:number, ordinal:number, height:number): number;
+
+	/**
+	 * Change the properties of a whitespace.
+	 * @param height is specified in pixels.
+	 */
+	changeWhitespace(id:number, newAfterLineNumber:number, newHeight:number): boolean;
+
+	/**
+	 * Remove rendering space
+	 */
+	removeWhitespace(id:number): boolean;
+
+	/**
+	 * Get the layout information for whitespaces currently in the viewport
+	 */
+	getWhitespaceViewportData(): editorCommon.IViewWhitespaceViewportData[];
+
+	getWhitespaces(): editorCommon.IEditorWhitespace[];
+}
+
+export interface ILayoutProvider extends IVerticalLayoutProvider, IScrollingProvider {
+
+	dispose():void;
+
+	getCenteredViewLineNumberInViewport(): number;
+
+	getCurrentViewport(): editorCommon.Viewport;
+
+	onMaxLineWidthChanged(width:number): void;
+
+	saveState(): editorCommon.IViewState;
+	restoreState(state:editorCommon.IViewState): void;
+}
+
+export interface IScrollingProvider {
+
+	getOverviewRulerInsertData(): { parent: HTMLElement; insertBefore: HTMLElement; };
+	getScrollbarContainerDomNode(): HTMLElement;
+	delegateVerticalScrollbarMouseDown(browserEvent:MouseEvent): void;
+
+	// This is for the glyphs, line numbers, etc.
+	getScrolledTopFromAbsoluteTop(top:number): number;
+
+	getScrollWidth(): number;
+	getScrollLeft(): number;
+
+	getScrollHeight(): number;
+	getScrollTop(): number;
+
+	setScrollPosition(position:editorCommon.INewScrollPosition): void;
+}
+
+export interface IVerticalLayoutProvider {
+	/**
+	 * Compute vertical offset (top) of line number
+	 */
+	getVerticalOffsetForLineNumber(lineNumber:number): number;
+
+	/**
+	 * Returns the height in pixels for `lineNumber`.
+	 */
+	heightInPxForLine(lineNumber:number): number;
+
+	/**
+	 * Return line number at `verticalOffset` or closest line number
+	 */
+	getLineNumberAtVerticalOffset(verticalOffset:number): number;
+
+	/**
+	 * Compute content height (including one extra scroll page if necessary)
+	 */
+	getTotalHeight(): number;
+
+	/**
+	 * Compute the lines that need to be rendered in the current viewport position.
+	 */
+	getLinesViewportData(): ViewLinesViewportData;
+
+}
+
+export class LayoutProvider extends ViewEventHandler implements IDisposable, ILayoutProvider, IWhitespaceManager {
 
 	static LINES_HORIZONTAL_EXTRA_PX = 30;
 
-	private configuration: EditorCommon.IConfiguration;
-	private privateViewEventBus:EditorCommon.IViewEventBus;
-	private model:EditorCommon.IViewModel;
+	private configuration: editorCommon.IConfiguration;
+	private privateViewEventBus:IViewEventBus;
+	private model:IViewModel;
 	private scrollManager:ScrollManager;
 	private linesLayout: LinesLayout;
-	private scrollable: EditorScrollable;
 
-	constructor(configuration:EditorCommon.IConfiguration, model:EditorCommon.IViewModel, privateViewEventBus:EditorCommon.IViewEventBus, linesContent:HTMLElement, viewDomNode:HTMLElement, overflowGuardDomNode:HTMLElement) {
+	constructor(configuration:editorCommon.IConfiguration, model:IViewModel, privateViewEventBus:IViewEventBus, linesContent:HTMLElement, viewDomNode:HTMLElement, overflowGuardDomNode:HTMLElement) {
 		super();
 
 		this.configuration = configuration;
 		this.privateViewEventBus = privateViewEventBus;
 		this.model = model;
 
-		this.scrollable = new EditorScrollable();
-		this.scrollable.setWidth(this.configuration.editor.layoutInfo.contentWidth);
-		this.scrollable.setHeight(this.configuration.editor.layoutInfo.contentHeight);
-		this.scrollManager = new ScrollManager(this.scrollable, configuration, privateViewEventBus, linesContent, viewDomNode, overflowGuardDomNode);
+		this.scrollManager = new ScrollManager(configuration, privateViewEventBus, linesContent, viewDomNode, overflowGuardDomNode);
 
 		this.configuration.setLineCount(this.model.getLineCount());
 
@@ -45,7 +128,6 @@ export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDispo
 
 	public dispose(): void {
 		this.scrollManager.dispose();
-		this.scrollable.dispose();
 	}
 
 	private updateLineCount(): void {
@@ -66,25 +148,24 @@ export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDispo
 		return false;
 	}
 
-	public onModelLinesDeleted(e:EditorCommon.IViewLinesDeletedEvent): boolean {
+	public onModelLinesDeleted(e:editorCommon.IViewLinesDeletedEvent): boolean {
 		this.linesLayout.onModelLinesDeleted(e);
 		this.updateLineCount();
 		this._updateHeight();
 		return false;
 	}
 
-	public onModelLinesInserted(e:EditorCommon.IViewLinesInsertedEvent): boolean {
+	public onModelLinesInserted(e:editorCommon.IViewLinesInsertedEvent): boolean {
 		this.linesLayout.onModelLinesInserted(e);
 		this.updateLineCount();
 		this._updateHeight();
 		return false;
 	}
 
-	public onConfigurationChanged(e:EditorCommon.IConfigurationChangedEvent): boolean {
+	public onConfigurationChanged(e:editorCommon.IConfigurationChangedEvent): boolean {
+		this.linesLayout.onConfigurationChanged(e);
 		if (e.layoutInfo) {
-			this.scrollable.setWidth(this.configuration.editor.layoutInfo.contentWidth);
-			this.scrollable.setHeight(this.configuration.editor.layoutInfo.contentHeight);
-			this.scrollManager.onSizeProviderLayoutChanged();
+			this.scrollManager.onLayoutInfoChanged();
 			this._emitLayoutChangedEvent();
 		}
 		this._updateHeight();
@@ -92,25 +173,20 @@ export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDispo
 	}
 
 	private _updateHeight(): void {
-		var oldScrollHeight = this.scrollable.getScrollHeight();
-		this.scrollable.setScrollHeight(this.getTotalHeight());
-		var newScrollHeight = this.scrollable.getScrollHeight();
-		if (oldScrollHeight !== newScrollHeight) {
-			this.privateViewEventBus.emit(EditorCommon.EventType.ViewScrollHeightChanged, newScrollHeight);
-		}
+		this.scrollManager.setScrollHeight(this.getTotalHeight());
 	}
 
 	// ---- end view event handlers
 
 	// ---- Layouting logic
 
-	public getCurrentViewport(): EditorCommon.IViewport {
-		return {
-			top: this.scrollable.getScrollTop(),
-			left: this.scrollable.getScrollLeft(),
-			width: this.configuration.editor.layoutInfo.contentWidth,
-			height: this.configuration.editor.layoutInfo.contentHeight
-		};
+	public getCurrentViewport(): editorCommon.Viewport {
+		return new editorCommon.Viewport(
+			this.scrollManager.getScrollTop(),
+			this.scrollManager.getScrollLeft(),
+			this.scrollManager.getWidth(),
+			this.scrollManager.getHeight()
+		);
 	}
 
 	public getCenteredViewLineNumberInViewport(): number {
@@ -118,7 +194,7 @@ export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDispo
 	}
 
 	private _emitLayoutChangedEvent(): void {
-		this.privateViewEventBus.emit(EditorCommon.EventType.ViewLayoutChanged, this.configuration.editor.layoutInfo);
+		this.privateViewEventBus.emit(editorCommon.EventType.ViewLayoutChanged, this.configuration.editor.layoutInfo);
 	}
 
 	public emitLayoutChangedEvent(): void {
@@ -135,51 +211,43 @@ export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDispo
 
 	public onMaxLineWidthChanged(maxLineWidth:number): void {
 		var newScrollWidth = this._computeScrollWidth(maxLineWidth, this.getCurrentViewport().width);
+		this.scrollManager.setScrollWidth(newScrollWidth);
 
-		var oldScrollWidth = this.scrollable.getScrollWidth();
-		this.scrollable.setScrollWidth(newScrollWidth);
-		newScrollWidth = this.scrollable.getScrollWidth();
-
-		if (newScrollWidth !== oldScrollWidth) {
-			this.privateViewEventBus.emit(EditorCommon.EventType.ViewScrollWidthChanged, newScrollWidth);
-			// The height might depend on the fact that there is a horizontal scrollbar or not
-			this._updateHeight();
-		}
+		// The height might depend on the fact that there is a horizontal scrollbar or not
+		this._updateHeight();
 	}
 
 	// ---- view state
 
-	public saveState(): EditorCommon.IViewState {
-		var scrollTop = this.scrollable.getScrollTop();
+	public saveState(): editorCommon.IViewState {
+		var scrollTop = this.scrollManager.getScrollTop();
 		var firstLineNumberInViewport = this.linesLayout.getLineNumberAtOrAfterVerticalOffset(scrollTop);
 		var whitespaceAboveFirstLine = this.linesLayout.getWhitespaceAccumulatedHeightBeforeLineNumber(firstLineNumberInViewport);
 		return {
 			scrollTop: scrollTop,
 			scrollTopWithoutViewZones: scrollTop - whitespaceAboveFirstLine,
-			scrollLeft: this.scrollable.getScrollLeft()
+			scrollLeft: this.scrollManager.getScrollLeft()
 		};
 	}
 
-	public restoreState(state:EditorCommon.IViewState): void {
+	public restoreState(state:editorCommon.IViewState): void {
 		var restoreScrollTop = state.scrollTop;
 		if (typeof state.scrollTopWithoutViewZones === 'number' && !this.linesLayout.hasWhitespace()) {
 			restoreScrollTop = state.scrollTopWithoutViewZones;
 		}
-		this.scrollable.setScrollTop(restoreScrollTop);
-		this.scrollable.setScrollLeft(state.scrollLeft);
+		this.scrollManager.setScrollPosition({
+			scrollLeft: state.scrollLeft,
+			scrollTop: restoreScrollTop
+		});
 	}
-
 
 	// ---- IVerticalLayoutProvider
 
 	public addWhitespace(afterLineNumber:number, ordinal:number, height:number): number {
 		return this.linesLayout.insertWhitespace(afterLineNumber, ordinal, height);
 	}
-	public changeWhitespace(id:number, newHeight:number): boolean {
-		return this.linesLayout.changeWhitespace(id, newHeight);
-	}
-	public changeAfterLineNumberForWhitespace(id:number, newAfterLineNumber:number): boolean {
-		return this.linesLayout.changeAfterLineNumberForWhitespace(id, newAfterLineNumber);
+	public changeWhitespace(id:number, newAfterLineNumber:number, newHeight:number): boolean {
+		return this.linesLayout.changeWhitespace(id, newAfterLineNumber, newHeight);
 	}
 	public removeWhitespace(id:number): boolean {
 		return this.linesLayout.removeWhitespace(id);
@@ -198,21 +266,21 @@ export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDispo
 	}
 	public getTotalHeight(): number {
 		var reserveHorizontalScrollbarHeight = 0;
-		if (this.scrollable.getScrollWidth() > this.scrollable.getWidth()) {
-			reserveHorizontalScrollbarHeight = this.configuration.editor.scrollbar.horizontalScrollbarSize;
+		if (this.scrollManager.getScrollWidth() > this.scrollManager.getWidth()) {
+			reserveHorizontalScrollbarHeight = this.configuration.editor.viewInfo.scrollbar.horizontalScrollbarSize;
 		}
 		return this.linesLayout.getTotalHeight(this.getCurrentViewport(), reserveHorizontalScrollbarHeight);
 	}
-	public getWhitespaceAtVerticalOffset(verticalOffset:number): EditorCommon.IViewWhitespaceViewportData {
+	public getWhitespaceAtVerticalOffset(verticalOffset:number): editorCommon.IViewWhitespaceViewportData {
 		return this.linesLayout.getWhitespaceAtVerticalOffset(verticalOffset);
 	}
-	public getLinesViewportData(): EditorCommon.IViewLinesViewportData {
+	public getLinesViewportData(): ViewLinesViewportData {
 		return this.linesLayout.getLinesViewportData(this.getCurrentViewport());
 	}
-	public getWhitespaceViewportData(): EditorCommon.IViewWhitespaceViewportData[] {
+	public getWhitespaceViewportData(): editorCommon.IViewWhitespaceViewportData[] {
 		return this.linesLayout.getWhitespaceViewportData(this.getCurrentViewport());
 	}
-	public getWhitespaces(): EditorCommon.IEditorWhitespace[] {
+	public getWhitespaces(): editorCommon.IEditorWhitespace[] {
 		return this.linesLayout.getWhitespaces();
 	}
 
@@ -231,25 +299,27 @@ export class LayoutProvider extends ViewEventHandler implements Lifecycle.IDispo
 	public delegateVerticalScrollbarMouseDown(browserEvent:MouseEvent): void {
 		this.scrollManager.delegateVerticalScrollbarMouseDown(browserEvent);
 	}
-	public getScrollHeight(): number {
-		return this.scrollable.getScrollHeight();
-	}
 	public getScrollWidth(): number {
-		return this.scrollable.getScrollWidth();
+		return this.scrollManager.getScrollWidth();
 	}
 	public getScrollLeft(): number {
-		return this.scrollable.getScrollLeft();
+		return this.scrollManager.getScrollLeft();
 	}
-	public setScrollLeft(scrollLeft:number): void {
-		this.scrollable.setScrollLeft(scrollLeft);
+	public getScrollHeight(): number {
+		return this.scrollManager.getScrollHeight();
 	}
 	public getScrollTop(): number {
-		return this.scrollable.getScrollTop();
+		return this.scrollManager.getScrollTop();
 	}
-	public setScrollTop(scrollTop:number): void {
-		this.scrollable.setScrollTop(scrollTop);
+
+	public setScrollPosition(position:editorCommon.INewScrollPosition): void {
+		this.scrollManager.setScrollPosition(position);
 	}
 	public getScrolledTopFromAbsoluteTop(top:number): number {
-		return top - this.scrollable.getScrollTop();
+		return top - this.scrollManager.getScrollTop();
+	}
+
+	public renderScrollbar(): void {
+		this.scrollManager.renderScrollbar();
 	}
 }

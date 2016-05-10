@@ -5,12 +5,11 @@
 'use strict';
 
 import * as nls from 'vs/nls';
-import {IModeService} from 'vs/editor/common/services/modeService';
-import {LanguageExtensions} from 'vs/editor/common/modes/languageExtensionPoint';
-import {PluginsRegistry} from 'vs/platform/plugins/common/pluginsRegistry';
-import pfs = require('vs/base/node/pfs');
-import json = require('vs/base/common/json');
+import {parse} from 'vs/base/common/json';
+import {readFile} from 'vs/base/node/pfs';
 import {IRichEditConfiguration} from 'vs/editor/common/modes/supports/richEditSupport';
+import {IModeService} from 'vs/editor/common/services/modeService';
+import {IAutoClosingPair} from 'vs/editor/common/modes';
 
 type CharacterPair = [string, string];
 
@@ -22,6 +21,8 @@ interface ICommentRule {
 interface ILanguageConfiguration {
 	comments?: ICommentRule;
 	brackets?: CharacterPair[];
+	autoClosingPairs?: CharacterPair[];
+	surroundingPairs?: CharacterPair[];
 }
 
 export class LanguageConfigurationFileHandler {
@@ -33,24 +34,31 @@ export class LanguageConfigurationFileHandler {
 	) {
 		this._modeService = modeService;
 
-		LanguageExtensions.getRegisteredModes().forEach(modeId => this._handleMode(modeId));
-		LanguageExtensions.onDidAddMode((modeId) => this._handleMode(modeId));
+		this._handleModes(this._modeService.getRegisteredModes());
+		this._modeService.onDidAddModes((modes) => this._handleModes(modes));
+	}
+
+	private _handleModes(modes:string[]): void {
+		modes.forEach(modeId => this._handleMode(modeId));
 	}
 
 	private _handleMode(modeId:string): void {
-		let activationEvent = 'onLanguage:' + modeId;
+		let disposable = this._modeService.onDidCreateMode((mode) => {
+			if (mode.getId() !== modeId) {
+				return;
+			}
 
-		PluginsRegistry.registerOneTimeActivationEventListener(activationEvent, () => {
-			let configurationFiles = LanguageExtensions.getConfigurationFiles(modeId);
-
+			let configurationFiles = this._modeService.getConfigurationFiles(modeId);
 			configurationFiles.forEach((configFilePath) => this._handleConfigFile(modeId, configFilePath));
+
+			disposable.dispose();
 		});
 	}
 
 	private _handleConfigFile(modeId:string, configFilePath:string): void {
-		pfs.readFile(configFilePath).then((fileContents) => {
+		readFile(configFilePath).then((fileContents) => {
 			var errors = [];
-			var configuration = <ILanguageConfiguration>json.parse(fileContents.toString(), errors);
+			var configuration = <ILanguageConfiguration>parse(fileContents.toString(), errors);
 			if (errors.length) {
 				console.error(nls.localize('parseErrors', "Errors parsing {0}: {1}", configFilePath, errors.join('\n')));
 			}
@@ -70,24 +78,29 @@ export class LanguageConfigurationFileHandler {
 
 		if (configuration.brackets) {
 			richEditConfig.brackets = configuration.brackets;
+		}
 
+		if (configuration.autoClosingPairs) {
 			richEditConfig.__characterPairSupport = {
-				autoClosingPairs: configuration.brackets.map(pair => {
-					let [open, close] = pair;
-					return { open: open, close: close };
-				})
+				autoClosingPairs: this._mapCharacterPairs(configuration.autoClosingPairs)
+			};
+		} else if (configuration.brackets) {
+			richEditConfig.__characterPairSupport = {
+				autoClosingPairs: this._mapCharacterPairs(configuration.brackets)
 			};
 		}
 
-		// TMSyntax hard-codes these and tokenizes them as brackets
-		richEditConfig.__electricCharacterSupport = {
-			brackets: [
-				{ tokenType:'delimiter.curly.' + modeId, open: '{', close: '}', isElectric: true },
-				{ tokenType:'delimiter.square.' + modeId, open: '[', close: ']', isElectric: true },
-				{ tokenType:'delimiter.paren.' + modeId, open: '(', close: ')', isElectric: true }
-			]
-		};
+		if (richEditConfig.__characterPairSupport && configuration.surroundingPairs) {
+			richEditConfig.__characterPairSupport.surroundingPairs = this._mapCharacterPairs(configuration.surroundingPairs);
+		}
 
 		this._modeService.registerRichEditSupport(modeId, richEditConfig);
+	}
+
+	private _mapCharacterPairs(pairs:CharacterPair[]): IAutoClosingPair[] {
+		return pairs.map(pair => {
+			let [open, close] = pair;
+			return { open: open, close: close };
+		});
 	}
 }

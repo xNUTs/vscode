@@ -4,13 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import Mouse = require('vs/base/browser/mouseEvent');
-import DomUtils = require('vs/base/browser/dom');
-import Touch = require('vs/base/browser/touch');
-import MouseHandler = require('vs/editor/browser/controller/mouseHandler');
-import EditorBrowser = require('vs/editor/browser/editorBrowser');
-import EditorCommon = require('vs/editor/common/editorCommon');
-import Lifecycle = require('vs/base/common/lifecycle');
+import {IDisposable} from 'vs/base/common/lifecycle';
+import * as dom from 'vs/base/browser/dom';
+import {StandardMouseEvent} from 'vs/base/browser/mouseEvent';
+import {EventType, Gesture, GestureEvent} from 'vs/base/browser/touch';
+import {IScrollEvent} from 'vs/editor/common/editorCommon';
+import {MouseHandler, IPointerHandlerHelper} from 'vs/editor/browser/controller/mouseHandler';
+import {IViewController} from 'vs/editor/browser/editorBrowser';
+import {ViewContext} from 'vs/editor/common/view/viewContext';
 
 interface IThrottledGestureEvent {
 	translationX: number;
@@ -32,12 +33,12 @@ var gestureChangeEventMerger = (lastEvent:IThrottledGestureEvent, currentEvent:M
 /**
  * Basically IE10 and IE11
  */
-class MsPointerHandler extends MouseHandler.MouseHandler implements Lifecycle.IDisposable {
+class MsPointerHandler extends MouseHandler implements IDisposable {
 
 	private _lastPointerType: string;
 	private _installGestureHandlerTimeout: number;
 
-	constructor(context:EditorBrowser.IViewContext, viewController:EditorBrowser.IViewController, viewHelper:EditorBrowser.IPointerHandlerHelper) {
+	constructor(context:ViewContext, viewController:IViewController, viewHelper:IPointerHandlerHelper) {
 		super(context, viewController, viewHelper);
 
 		this.viewHelper.linesContentDomNode.style.msTouchAction = 'none';
@@ -66,8 +67,8 @@ class MsPointerHandler extends MouseHandler.MouseHandler implements Lifecycle.ID
 						penGesture.addPointer(e.pointerId);
 					}
 				});
-				this.listenersToRemove.push(DomUtils.addDisposableThrottledListener<IThrottledGestureEvent>(this.viewHelper.linesContentDomNode, 'MSGestureChange', (e) => this._onGestureChange(e), gestureChangeEventMerger));
-				this.listenersToRemove.push(DomUtils.addDisposableListener(this.viewHelper.linesContentDomNode, 'MSGestureTap', (e) => this._onCaptureGestureTap(e), true));
+				this.listenersToRemove.push(dom.addDisposableThrottledListener<IThrottledGestureEvent>(this.viewHelper.linesContentDomNode, 'MSGestureChange', (e) => this._onGestureChange(e), gestureChangeEventMerger));
+				this.listenersToRemove.push(dom.addDisposableListener(this.viewHelper.linesContentDomNode, 'MSGestureTap', (e) => this._onCaptureGestureTap(e), true));
 			}
 		}, 100);
 		this._lastPointerType = 'mouse';
@@ -80,10 +81,10 @@ class MsPointerHandler extends MouseHandler.MouseHandler implements Lifecycle.ID
 	}
 
 	private _onCaptureGestureTap(rawEvent: MSGestureEvent): void {
-		var e = new Mouse.StandardMouseEvent(<MouseEvent><any>rawEvent);
+		var e = new StandardMouseEvent(<MouseEvent><any>rawEvent);
 		var t = this._createMouseTarget(e, false);
 		if (t.position) {
-			this.viewController.moveTo('mouse', t.position.lineNumber, t.position.column);
+			this.viewController.moveTo('mouse', t.position);
 		}
 		// IE does not want to focus when coming in from the browser's address bar
 		if ((<any>e.browserEvent).fromElement) {
@@ -98,8 +99,10 @@ class MsPointerHandler extends MouseHandler.MouseHandler implements Lifecycle.ID
 	}
 
 	private _onGestureChange(e:IThrottledGestureEvent): void {
-		this.viewHelper.setScrollTop(this.viewHelper.getScrollTop() - e.translationY);
-		this.viewHelper.setScrollLeft(this.viewHelper.getScrollLeft() - e.translationX);
+		this.viewHelper.setScrollPosition({
+			scrollLeft: this.viewHelper.getScrollLeft() - e.translationX,
+			scrollTop: this.viewHelper.getScrollTop() - e.translationY,
+		});
 	}
 
 	public dispose(): void {
@@ -111,12 +114,12 @@ class MsPointerHandler extends MouseHandler.MouseHandler implements Lifecycle.ID
 /**
  * Basically Edge but should be modified to handle any pointerEnabled, even without support of MSGesture
  */
-class StandardPointerHandler extends MouseHandler.MouseHandler implements Lifecycle.IDisposable {
+class StandardPointerHandler extends MouseHandler implements IDisposable {
 
 	private _lastPointerType: string;
 	private _installGestureHandlerTimeout: number;
 
-	constructor(context:EditorBrowser.IViewContext, viewController:EditorBrowser.IViewController, viewHelper:EditorBrowser.IPointerHandlerHelper) {
+	constructor(context:ViewContext, viewController:IViewController, viewHelper:IPointerHandlerHelper) {
 		super(context, viewController, viewHelper);
 
 		this.viewHelper.linesContentDomNode.style.touchAction = 'none';
@@ -145,8 +148,8 @@ class StandardPointerHandler extends MouseHandler.MouseHandler implements Lifecy
 						penGesture.addPointer(e.pointerId);
 					}
 				});
-				this.listenersToRemove.push(DomUtils.addDisposableThrottledListener<IThrottledGestureEvent>(this.viewHelper.linesContentDomNode, 'MSGestureChange', (e) => this._onGestureChange(e), gestureChangeEventMerger));
-				this.listenersToRemove.push(DomUtils.addDisposableListener(this.viewHelper.linesContentDomNode, 'MSGestureTap', (e) => this._onCaptureGestureTap(e), true));
+				this.listenersToRemove.push(dom.addDisposableThrottledListener<IThrottledGestureEvent>(this.viewHelper.linesContentDomNode, 'MSGestureChange', (e) => this._onGestureChange(e), gestureChangeEventMerger));
+				this.listenersToRemove.push(dom.addDisposableListener(this.viewHelper.linesContentDomNode, 'MSGestureTap', (e) => this._onCaptureGestureTap(e), true));
 			}
 		}, 100);
 		this._lastPointerType = 'mouse';
@@ -159,10 +162,10 @@ class StandardPointerHandler extends MouseHandler.MouseHandler implements Lifecy
 	}
 
 	private _onCaptureGestureTap(rawEvent: MSGestureEvent): void {
-		var e = new Mouse.StandardMouseEvent(<MouseEvent><any>rawEvent);
+		var e = new StandardMouseEvent(<MouseEvent><any>rawEvent);
 		var t = this._createMouseTarget(e, false);
 		if (t.position) {
-			this.viewController.moveTo('mouse', t.position.lineNumber, t.position.column);
+			this.viewController.moveTo('mouse', t.position);
 		}
 		// IE does not want to focus when coming in from the browser's address bar
 		if ((<any>e.browserEvent).fromElement) {
@@ -177,8 +180,10 @@ class StandardPointerHandler extends MouseHandler.MouseHandler implements Lifecy
 	}
 
 	private _onGestureChange(e:IThrottledGestureEvent): void {
-		this.viewHelper.setScrollTop(this.viewHelper.getScrollTop() - e.translationY);
-		this.viewHelper.setScrollLeft(this.viewHelper.getScrollLeft() - e.translationX);
+		this.viewHelper.setScrollPosition({
+			scrollLeft: this.viewHelper.getScrollLeft() - e.translationX,
+			scrollTop: this.viewHelper.getScrollTop() - e.translationY,
+		});
 	}
 
 	public dispose(): void {
@@ -187,17 +192,19 @@ class StandardPointerHandler extends MouseHandler.MouseHandler implements Lifecy
 	}
 }
 
-class TouchHandler extends MouseHandler.MouseHandler {
+class TouchHandler extends MouseHandler {
 
-	private gesture:Touch.Gesture;
+	private gesture:Gesture;
 
-	constructor(context:EditorBrowser.IViewContext, viewController:EditorBrowser.IViewController, viewHelper:EditorBrowser.IPointerHandlerHelper) {
+	constructor(context:ViewContext, viewController:IViewController, viewHelper:IPointerHandlerHelper) {
 		super(context, viewController, viewHelper);
 
-		this.gesture = new Touch.Gesture(this.viewHelper.linesContentDomNode);
+		this.gesture = new Gesture(this.viewHelper.linesContentDomNode);
 
-		this.listenersToRemove.push(DomUtils.addDisposableListener(this.viewHelper.linesContentDomNode, Touch.EventType.Tap, (e) => this.onTap(e)));
-		this.listenersToRemove.push(DomUtils.addDisposableListener(this.viewHelper.linesContentDomNode, Touch.EventType.Change, (e) => this.onChange(e)));
+		this.listenersToRemove.push(dom.addDisposableListener(this.viewHelper.linesContentDomNode, EventType.Tap, (e) => this.onTap(e)));
+		this.listenersToRemove.push(dom.addDisposableListener(this.viewHelper.linesContentDomNode, EventType.Change, (e) => this.onChange(e)));
+		this.listenersToRemove.push(dom.addDisposableListener(this.viewHelper.linesContentDomNode, EventType.Contextmenu, (e: MouseEvent) => this._onContextMenu(e, false)));
+
 	}
 
 	public dispose(): void {
@@ -205,29 +212,31 @@ class TouchHandler extends MouseHandler.MouseHandler {
 		super.dispose();
 	}
 
-	private onTap(event:Touch.GestureEvent): void {
+	private onTap(event:GestureEvent): void {
 		event.preventDefault();
 
 		this.viewHelper.focusTextArea();
 
-		var mouseEvent = new Mouse.StandardMouseEvent(event);
+		var mouseEvent = new StandardMouseEvent(event);
 		var target = this._createMouseTarget(mouseEvent, false);
 
 		if (target.position) {
-			this.viewController.moveTo('mouse', target.position.lineNumber, target.position.column);
+			this.viewController.moveTo('mouse', target.position);
 		}
 	}
 
-	private onChange(event:Touch.GestureEvent): void {
-		this.viewHelper.setScrollTop(this.viewHelper.getScrollTop() - event.translationY);
-		this.viewHelper.setScrollLeft(this.viewHelper.getScrollLeft() - event.translationX);
+	private onChange(e:GestureEvent): void {
+		this.viewHelper.setScrollPosition({
+			scrollLeft: this.viewHelper.getScrollLeft() - e.translationX,
+			scrollTop: this.viewHelper.getScrollTop() - e.translationY,
+		});
 	}
 }
 
-export class PointerHandler implements Lifecycle.IDisposable {
-	private handler:MouseHandler.MouseHandler;
+export class PointerHandler implements IDisposable {
+	private handler:MouseHandler;
 
-	constructor(context:EditorBrowser.IViewContext, viewController:EditorBrowser.IViewController, viewHelper:EditorBrowser.IPointerHandlerHelper) {
+	constructor(context:ViewContext, viewController:IViewController, viewHelper:IPointerHandlerHelper) {
 		if (window.navigator.msPointerEnabled) {
 			this.handler = new MsPointerHandler(context, viewController, viewHelper);
 		} else if((<any> window).TouchEvent) {
@@ -235,11 +244,11 @@ export class PointerHandler implements Lifecycle.IDisposable {
 		} else if (window.navigator.pointerEnabled) {
 			this.handler = new StandardPointerHandler(context, viewController, viewHelper);
 		} else {
-			this.handler = new MouseHandler.MouseHandler(context, viewController, viewHelper);
+			this.handler = new MouseHandler(context, viewController, viewHelper);
 		}
 	}
 
-	public onScrollChanged(e:EditorCommon.IScrollEvent): void {
+	public onScrollChanged(e:IScrollEvent): void {
 		this.handler.onScrollChanged(e);
 	}
 

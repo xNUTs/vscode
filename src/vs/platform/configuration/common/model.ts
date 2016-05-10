@@ -80,9 +80,8 @@ export function consolidate(configMap: { [key: string]: IConfigFile; }): { conte
 	// For each config file in .vscode folder
 	Object.keys(configMap).forEach((configFileName) => {
 		let config = objects.clone(configMap[configFileName]);
-
 		let matches = regexp.exec(configFileName);
-		if (!matches) {
+		if (!matches || !config) {
 			return;
 		}
 
@@ -168,7 +167,7 @@ export function getDefaultValues(): any {
 }
 
 
-export function getDefaultValuesContent(): string {
+export function getDefaultValuesContent(indent: string): string {
 	let lastEntry = -1;
 	let result: string[] = [];
 	result.push('{');
@@ -178,9 +177,9 @@ export function getDefaultValuesContent(): string {
 		if (config.title) {
 			if (isTop) {
 				result.push('');
-				result.push('\t//-------- ' + config.title + ' --------');
+				result.push(indent + '//-------- ' + config.title + ' --------');
 			} else {
-				result.push('\t// ' + config.title);
+				result.push(indent + '// ' + config.title);
 			}
 			result.push('');
 		}
@@ -193,12 +192,12 @@ export function getDefaultValuesContent(): string {
 					defaultValue = getDefaultValue(prop.type);
 				}
 				if (prop.description) {
-					result.push('\t// ' + prop.description);
+					result.push(indent + '// ' + prop.description);
 				}
 
-				let valueString = JSON.stringify(defaultValue, null, '\t');
+				let valueString = JSON.stringify(defaultValue, null, indent);
 				if (valueString && (typeof defaultValue === 'object')) {
-					valueString = addIndent(valueString);
+					valueString = addIndent(valueString, indent);
 				}
 
 				if (lastEntry !== -1) {
@@ -206,7 +205,7 @@ export function getDefaultValuesContent(): string {
 				}
 				lastEntry = result.length;
 
-				result.push('\t' + JSON.stringify(key) + ': ' + valueString);
+				result.push(indent + JSON.stringify(key) + ': ' + valueString);
 				result.push('');
 			});
 		}
@@ -217,12 +216,13 @@ export function getDefaultValuesContent(): string {
 	return result.join('\n');
 }
 
-function addIndent(str: string): string {
-	return str.split('\n').join('\n\t');
+function addIndent(str: string, indent: string): string {
+	return str.split('\n').join('\n' + indent);
 }
 
-function getDefaultValue(type: string): any {
-	switch (type) {
+function getDefaultValue(type: string | string[]): any {
+	let t = Array.isArray(type) ? (<string[]> type)[0] : <string> type;
+	switch (t) {
 		case 'boolean':
 			return false;
 		case 'integer':

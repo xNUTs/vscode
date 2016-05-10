@@ -22,21 +22,21 @@ import {GotoMarkerAction} from 'vs/workbench/parts/quickopen/browser/markersHand
 let registry = <IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions);
 registry.registerWorkbenchAction(new SyncActionDescriptor(GotoMarkerAction, GotoMarkerAction.Id, GotoMarkerAction.Label, {
 	primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_M
-}));
+}), 'Show Errors and Warnings');
 
 registry.registerWorkbenchAction(new SyncActionDescriptor(ShowAllCommandsAction, ShowAllCommandsAction.ID, ShowAllCommandsAction.LABEL, {
 	primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_P,
 	secondary: [KeyCode.F1]
-}));
+}), 'Show All Commands');
 
 registry.registerWorkbenchAction(new SyncActionDescriptor(GotoLineAction, GotoLineAction.ID, GotoLineAction.LABEL, {
 	primary: KeyMod.CtrlCmd | KeyCode.KEY_G,
 	mac: { primary: KeyMod.WinCtrl | KeyCode.KEY_G }
-}));
+}), 'Go to Line...');
 
 registry.registerWorkbenchAction(new SyncActionDescriptor(GotoSymbolAction, GotoSymbolAction.ID, GotoSymbolAction.LABEL, {
 	primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_O
-}));
+}), 'Go to Symbol...');
 
 // Register Quick Open Handler
 

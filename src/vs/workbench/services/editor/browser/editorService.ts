@@ -22,7 +22,7 @@ import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/unti
 import {IWorkbenchEditorService, EditorArrangement} from 'vs/workbench/services/editor/common/editorService';
 import {IEditorInput, IEditorModel, IEditorOptions, Position, IEditor, IResourceInput, ITextEditorModel} from 'vs/platform/editor/common/editor';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {AsyncDescriptor} from 'vs/platform/instantiation/common/descriptors';
+import {AsyncDescriptor0} from 'vs/platform/instantiation/common/descriptors';
 
 export interface IEditorPart {
 	setEditors(inputs: EditorInput[], options?: EditorOptions[]): TPromise<BaseEditor[]>;
@@ -41,7 +41,7 @@ export class WorkbenchEditorService implements IWorkbenchEditorService {
 	public serviceId = IWorkbenchEditorService;
 
 	private editorPart: IEditorPart;
-	private fileInputDescriptor: AsyncDescriptor<IFileEditorInput>;
+	private fileInputDescriptor: AsyncDescriptor0<IFileEditorInput>;
 
 	constructor(
 		editorPart: IEditorPart,
@@ -50,10 +50,6 @@ export class WorkbenchEditorService implements IWorkbenchEditorService {
 	) {
 		this.editorPart = editorPart;
 		this.fileInputDescriptor = (<IEditorRegistry>Registry.as(Extensions.Editors)).getDefaultFileInput();
-	}
-
-	public setInstantiationService(service: IInstantiationService): void {
-		this.instantiationService = service;
 	}
 
 	public getActiveEditor(): IEditor {
@@ -135,8 +131,8 @@ export class WorkbenchEditorService implements IWorkbenchEditorService {
 		let resourceInput = <IResourceInput>input;
 		if (resourceInput.resource instanceof URI) {
 			let schema = resourceInput.resource.scheme;
-			if (schema === network.schemas.http || schema === network.schemas.https) {
-				window.open(resourceInput.resource.toString());
+			if (schema === network.Schemas.http || schema === network.Schemas.https) {
+				window.open(resourceInput.resource.toString(true));
 				return TPromise.as<IEditor>(null);
 			}
 		}
@@ -252,7 +248,7 @@ export class WorkbenchEditorService implements IWorkbenchEditorService {
 
 		// Base Text Editor Support for inmemory resources
 		let resourceInput = <IResourceInput>input;
-		if (resourceInput.resource instanceof URI && resourceInput.resource.scheme === network.schemas.inMemory) {
+		if (resourceInput.resource instanceof URI && resourceInput.resource.scheme === network.Schemas.inMemory) {
 
 			// For in-memory resources we only support to resolve the input from the current active editor
 			// because the workbench does not track editor models by in memory URL. This concept is only
@@ -296,7 +292,7 @@ export class WorkbenchEditorService implements IWorkbenchEditorService {
 		}
 
 		// Base Text Editor Support for file resources
-		else if (this.fileInputDescriptor && resourceInput.resource instanceof URI && resourceInput.resource.scheme === network.schemas.file) {
+		else if (this.fileInputDescriptor && resourceInput.resource instanceof URI && resourceInput.resource.scheme === network.Schemas.file) {
 			return this.createFileInput(resourceInput.resource, resourceInput.mime);
 		}
 

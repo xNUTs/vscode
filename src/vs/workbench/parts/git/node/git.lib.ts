@@ -6,7 +6,7 @@
 import { Promise, TPromise } from 'vs/base/common/winjs.base';
 import extfs = require('vs/base/node/extfs');
 import { guessMimeTypes, isBinaryMime } from 'vs/base/common/mime';
-import { IDisposable, toDisposable, disposeAll } from 'vs/base/common/lifecycle';
+import { IDisposable, toDisposable, dispose } from 'vs/base/common/lifecycle';
 import objects = require('vs/base/common/objects');
 import uuid = require('vs/base/common/uuid');
 import nls = require('vs/nls');
@@ -15,7 +15,7 @@ import { IRawFileStatus, IHead, ITag, IBranch, IRemote, GitErrorCodes, IPushOpti
 import { detectMimesFromStream } from 'vs/base/node/mime';
 import files = require('vs/platform/files/common/files');
 import { spawn, ChildProcess } from 'child_process';
-import iconv = require('iconv-lite');
+import { decode, encodingExists } from 'vs/base/node/encoding';
 
 export interface IExecutionResult {
 	exitCode: number;
@@ -44,15 +44,15 @@ function exec(child: ChildProcess, encoding = 'utf8'): TPromise<IExecutionResult
 		new TPromise<string>(c => {
 			let buffers: Buffer[] = [];
 			on(child.stdout, 'data', b => buffers.push(b));
-			once(child.stdout, 'close', () => c(iconv.decode(Buffer.concat(buffers), encoding)));
+			once(child.stdout, 'close', () => c(decode(Buffer.concat(buffers), encoding)));
 		}),
 		new TPromise<string>(c => {
 			let buffers: Buffer[] = [];
 			on(child.stderr, 'data', b => buffers.push(b));
-			once(child.stderr, 'close', () => c(iconv.decode(Buffer.concat(buffers), encoding)));
+			once(child.stderr, 'close', () => c(decode(Buffer.concat(buffers), encoding)));
 		})
 	]).then(values => {
-		disposeAll(disposables);
+		dispose(disposables);
 
 		return {
 			exitCode: values[0],
@@ -117,6 +117,7 @@ export class GitError {
 
 export interface IGitOptions {
 	gitPath:string;
+	version: string;
 	tmpPath:string;
 	defaultEncoding?: string;
 	env?:any;
@@ -125,6 +126,7 @@ export interface IGitOptions {
 export class Git {
 
 	public gitPath: string;
+	public version: string;
 	public env: any;
 	private tmpPath: string;
 	private defaultEncoding: string;
@@ -132,10 +134,11 @@ export class Git {
 
 	constructor(options: IGitOptions) {
 		this.gitPath = options.gitPath;
+		this.version = options.version;
 		this.tmpPath = options.tmpPath;
 
 		const encoding = options.defaultEncoding || 'utf8';
-		this.defaultEncoding = iconv.encodingExists(encoding) ? encoding : 'utf8';
+		this.defaultEncoding = encodingExists(encoding) ? encoding : 'utf8';
 
 		this.env = options.env || {};
 		this.outputListeners = [];
@@ -266,6 +269,10 @@ export class Repository {
 		this.repository = repository;
 		this.defaultEncoding = defaultEncoding;
 		this.env = env;
+	}
+
+	public get version(): string {
+		return this.git.version;
 	}
 
 	public get path(): string {

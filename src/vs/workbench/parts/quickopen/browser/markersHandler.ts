@@ -16,6 +16,7 @@ import {PathLabelProvider} from 'vs/base/common/labels';
 import {ITree, IElementCallback} from 'vs/base/parts/tree/browser/tree';
 import Severity from 'vs/base/common/severity';
 import {QuickOpenHandler} from 'vs/workbench/browser/quickopen';
+import {BaseTextEditor} from 'vs/workbench/browser/parts/editor/textEditor';
 import {QuickOpenAction} from 'vs/workbench/browser/actions/quickOpenAction';
 import {Mode, IContext, IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
 import {QuickOpenEntryItem, QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
@@ -53,7 +54,7 @@ class MarkerEntry extends QuickOpenEntryItem {
 
 	public update(query: string): void {
 
-		if (this._marker.resource.scheme === network.schemas.inMemory) {
+		if (this._marker.resource.scheme === network.Schemas.inMemory) {
 			// ignore inmemory-models
 			this.setHidden(true);
 			return;
@@ -164,7 +165,8 @@ export class MarkersHandler extends QuickOpenHandler {
 		@IMarkerService markerService: IMarkerService,
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
 		@ICodeEditorService codeEditorService: ICodeEditorService,
-		@IWorkspaceContextService contextService: IWorkspaceContextService) {
+		@IWorkspaceContextService contextService: IWorkspaceContextService
+	) {
 		super();
 
 		this._markerService = markerService;
@@ -189,8 +191,8 @@ export class MarkersHandler extends QuickOpenHandler {
 			// 2nd viewstate
 			const editor = this._editorService.getActiveEditor();
 			let viewState: IEditorViewState;
-			if (editor) {
-				viewState = (<ICommonCodeEditor>editor.getControl()).saveViewState();
+			if (editor instanceof BaseTextEditor) {
+				viewState = editor.getControl().saveViewState();
 			}
 
 			this._activeSession = [model, viewState];

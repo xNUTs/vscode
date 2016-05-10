@@ -16,8 +16,8 @@ import errors = require('vs/base/common/errors');
 import mime = require('vs/base/common/mime');
 import uri from 'vs/base/common/uri';
 import paths = require('vs/base/common/paths');
-import {StandardMouseEvent, DragMouseEvent} from 'vs/base/browser/mouseEvent';
-import {StandardKeyboardEvent} from 'vs/base/browser/keyboardEvent';
+import {IMouseEvent, DragMouseEvent} from 'vs/base/browser/mouseEvent';
+import {IKeyboardEvent} from 'vs/base/browser/keyboardEvent';
 import {Separator} from 'vs/base/browser/ui/actionbar/actionbar';
 import actions = require('vs/base/common/actions');
 import {ActionsRenderer} from 'vs/base/parts/tree/browser/actionsRenderer';
@@ -29,7 +29,7 @@ import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/unti
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {IContextMenuService} from 'vs/platform/contextview/browser/contextView';
-import {IInstantiationService, INullService} from 'vs/platform/instantiation/common/instantiation';
+import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {CommonKeybindings, Keybinding} from 'vs/base/common/keyCodes';
 
@@ -37,7 +37,7 @@ const ROOT_ID = '__WORKING_FILES_ROOT';
 
 export class WorkingFilesDataSource implements IDataSource {
 
-	constructor( @INullService ns) { }
+	constructor() { }
 
 	public getId(tree: ITree, element: any): string {
 		if (element instanceof WorkingFileEntry) {
@@ -70,7 +70,7 @@ export class WorkingFilesDataSource implements IDataSource {
 
 export class WorkingFilesSorter implements ISorter {
 
-	constructor(@INullService ns) { }
+	constructor() { }
 
 	public compare(tree: ITree, element: any, otherElement: any): number {
 		return WorkingFilesModel.compare(element, otherElement);
@@ -171,10 +171,12 @@ export class WorkingFilesActionProvider extends ContributableActionProvider {
 
 					let saveAction = this.instantiationService.createInstance(SaveFileAction, SaveFileAction.ID, SaveFileAction.LABEL);
 					saveAction.setResource(element.resource);
+					saveAction.enabled = element.dirty;
 					actions.push(saveAction);
 
 					let revertAction = this.instantiationService.createInstance(RevertFileAction, RevertFileAction.ID, RevertFileAction.LABEL);
 					revertAction.setResource(element.resource);
+					revertAction.enabled = element.dirty;
 					actions.push(revertAction);
 				}
 
@@ -341,7 +343,7 @@ export class WorkingFilesController extends DefaultController {
 		}
 	}
 
-	/* protected */ public onClick(tree: ITree, element: any, event: StandardMouseEvent): boolean {
+	/* protected */ public onClick(tree: ITree, element: any, event: IMouseEvent): boolean {
 
 		// Close working file on middle mouse click
 		if (element instanceof WorkingFileEntry && event.browserEvent && event.browserEvent.button === 1 /* Middle Button */) {
@@ -356,7 +358,7 @@ export class WorkingFilesController extends DefaultController {
 		return super.onClick(tree, element, event);
 	}
 
-	/* protected */ public onLeftClick(tree: ITree, element: any, event: StandardMouseEvent, origin: string = 'mouse'): boolean {
+	/* protected */ public onLeftClick(tree: ITree, element: any, event: IMouseEvent, origin: string = 'mouse'): boolean {
 		let payload = { origin: origin };
 		let isDoubleClick = (origin === 'mouse' && event.detail === 2);
 
@@ -402,7 +404,7 @@ export class WorkingFilesController extends DefaultController {
 		return true;
 	}
 
-	private onEnterDown(tree: ITree, event: StandardKeyboardEvent): boolean {
+	private onEnterDown(tree: ITree, event: IKeyboardEvent): boolean {
 		let payload = { origin: 'keyboard' };
 
 		let element = tree.getFocus();
@@ -414,7 +416,7 @@ export class WorkingFilesController extends DefaultController {
 		return true;
 	}
 
-	private onModifierEnterUp(tree: ITree, event: StandardKeyboardEvent): boolean {
+	private onModifierEnterUp(tree: ITree, event: IKeyboardEvent): boolean {
 		let element = tree.getFocus();
 		if (element) {
 			this.openEditor(<WorkingFileEntry>element, false, true);

@@ -4,23 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import EditorCommon = require('vs/editor/common/editorCommon');
+import * as editorCommon from 'vs/editor/common/editorCommon';
 
-var getStartIndex = EditorCommon.LineTokensBinaryEncoding.getStartIndex;
-var inflate = EditorCommon.LineTokensBinaryEncoding.inflate;
+export class TokenIterator implements editorCommon.ITokenIterator {
 
-export class TokenIterator implements EditorCommon.ITokenIterator {
-
-	private _model:EditorCommon.ITokenizedModel;
+	private _model:editorCommon.ITokenizedModel;
 	private _currentLineNumber:number;
 	private _currentTokenIndex:number;
-	private _currentLineTokens:EditorCommon.ILineTokens;
-	private _currentTokens:number[];
-	private _map:EditorCommon.ITokensInflatorMap;
-	private _next:EditorCommon.ITokenInfo;
-	private _prev:EditorCommon.ITokenInfo;
+	private _currentLineTokens:editorCommon.ILineTokens;
+	private _next:editorCommon.ITokenInfo;
+	private _prev:editorCommon.ITokenInfo;
 
-	constructor(model:EditorCommon.ITokenizedModel, position:EditorCommon.IPosition) {
+	constructor(model:editorCommon.ITokenizedModel, position:editorCommon.IPosition) {
 		this._model = model;
 		this._currentLineNumber = position.lineNumber;
 		this._currentTokenIndex = 0;
@@ -31,27 +26,28 @@ export class TokenIterator implements EditorCommon.ITokenIterator {
 		// start with a position to next/prev run
 		var columnIndex = position.column - 1, tokenEndIndex = Number.MAX_VALUE;
 
-		for (var i = this._currentTokens.length - 1; i >= 0; i--) {
-			if (getStartIndex(this._currentTokens[i]) <= columnIndex && columnIndex <= tokenEndIndex) {
+		for (var i = this._currentLineTokens.getTokenCount() - 1; i >= 0; i--) {
+			let tokenStartIndex = this._currentLineTokens.getTokenStartIndex(i);
+
+			if (tokenStartIndex <= columnIndex && columnIndex <= tokenEndIndex) {
+
 				this._currentTokenIndex = i;
 				this._next = this._current();
 				this._prev = this._current();
 				break;
 			}
-			tokenEndIndex = getStartIndex(this._currentTokens[i]);
+			tokenEndIndex = tokenStartIndex;
 		}
 	}
 
 	private _readLineTokens(lineNumber:number): void {
 		this._currentLineTokens = this._model.getLineTokens(lineNumber, false);
-		this._currentTokens = this._currentLineTokens.getBinaryEncodedTokens();
-		this._map = this._currentLineTokens.getBinaryEncodedTokensMap();
 	}
 
 	private _advanceNext() {
 		this._prev = this._next;
 		this._next = null;
-		if (this._currentTokenIndex + 1 < this._currentTokens.length) {
+		if (this._currentTokenIndex + 1 < this._currentLineTokens.getTokenCount()) {
 			// There are still tokens on current line
 			this._currentTokenIndex++;
 			this._next = this._current();
@@ -61,7 +57,7 @@ export class TokenIterator implements EditorCommon.ITokenIterator {
 			while (this._currentLineNumber + 1 <= this._model.getLineCount()) {
 				this._currentLineNumber++;
 				this._readLineTokens(this._currentLineNumber);
-				if (this._currentTokens.length > 0) {
+				if (this._currentLineTokens.getTokenCount() > 0) {
 					this._currentTokenIndex = 0;
 					this._next = this._current();
 					break;
@@ -70,7 +66,7 @@ export class TokenIterator implements EditorCommon.ITokenIterator {
 			if (this._next === null) {
 				// prepare of a previous run
 				this._readLineTokens(this._currentLineNumber);
-				this._currentTokenIndex = this._currentTokens.length;
+				this._currentTokenIndex = this._currentLineTokens.getTokenCount();
 				this._advancePrev();
 				this._next = null;
 			}
@@ -90,8 +86,8 @@ export class TokenIterator implements EditorCommon.ITokenIterator {
 			while (this._currentLineNumber > 1) {
 				this._currentLineNumber--;
 				this._readLineTokens(this._currentLineNumber);
-				if (this._currentTokens.length > 0) {
-					this._currentTokenIndex = this._currentTokens.length - 1;
+				if (this._currentLineTokens.getTokenCount() > 0) {
+					this._currentTokenIndex = this._currentLineTokens.getTokenCount() - 1;
 					this._prev = this._current();
 					break;
 				}
@@ -99,12 +95,19 @@ export class TokenIterator implements EditorCommon.ITokenIterator {
 		}
 	}
 
-	private _current(): EditorCommon.ITokenInfo {
+	private _current(): editorCommon.ITokenInfo {
+		let startIndex = this._currentLineTokens.getTokenStartIndex(this._currentTokenIndex);
+		let type = this._currentLineTokens.getTokenType(this._currentTokenIndex);
+		let endIndex = this._currentLineTokens.getTokenEndIndex(this._currentTokenIndex, this._model.getLineContent(this._currentLineNumber).length);
+
 		return {
-			token: inflate(this._map, this._currentTokens[this._currentTokenIndex]),
+			token: {
+				startIndex: startIndex,
+				type: type
+			},
 			lineNumber: this._currentLineNumber,
-			startColumn: getStartIndex(this._currentTokens[this._currentTokenIndex]) + 1,
-			endColumn: this._currentTokenIndex + 1 < this._currentTokens.length ? getStartIndex(this._currentTokens[this._currentTokenIndex + 1]) + 1 : this._model.getLineContent(this._currentLineNumber).length + 1
+			startColumn: startIndex + 1,
+			endColumn: endIndex + 1
 		};
 	}
 
@@ -112,7 +115,7 @@ export class TokenIterator implements EditorCommon.ITokenIterator {
 		return this._next !== null;
 	}
 
-	public next(): EditorCommon.ITokenInfo {
+	public next(): editorCommon.ITokenInfo {
 		var result = this._next;
 		this._advanceNext();
 		return result;
@@ -122,7 +125,7 @@ export class TokenIterator implements EditorCommon.ITokenIterator {
 		return this._prev !== null;
 	}
 
-	public prev(): EditorCommon.ITokenInfo {
+	public prev(): editorCommon.ITokenInfo {
 		var result = this._prev;
 		this._advancePrev();
 		return result;

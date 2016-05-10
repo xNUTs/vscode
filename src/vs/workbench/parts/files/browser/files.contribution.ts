@@ -8,7 +8,6 @@
 import 'vs/css!./media/files.contribution';
 
 import URI from 'vs/base/common/uri';
-import {SUPPORTED_ENCODINGS} from 'vs/base/common/bits/encoding';
 import {ViewletRegistry, Extensions as ViewletExtensions, ViewletDescriptor, ToggleViewletAction} from 'vs/workbench/browser/viewlet';
 import nls = require('vs/nls');
 import {SyncActionDescriptor} from 'vs/platform/actions/common/actions';
@@ -22,19 +21,20 @@ import {IEditorRegistry, Extensions as EditorExtensions, IEditorInputFactory} fr
 import {EditorInput, IFileEditorInput} from 'vs/workbench/common/editor';
 import {QuickOpenHandlerDescriptor, IQuickOpenRegistry, Extensions as QuickOpenExtensions} from 'vs/workbench/browser/quickopen';
 import {FileEditorDescriptor} from 'vs/workbench/parts/files/browser/files';
-import {AutoSaveConfiguration} from 'vs/platform/files/common/files';
+import {AutoSaveConfiguration, SUPPORTED_ENCODINGS} from 'vs/platform/files/common/files';
 import {FILE_EDITOR_INPUT_ID, VIEWLET_ID} from 'vs/workbench/parts/files/common/files';
 import {FileTracker} from 'vs/workbench/parts/files/browser/fileTracker';
 import {SaveParticipant} from 'vs/workbench/parts/files/common/editors/saveParticipant';
 import {FileEditorInput} from 'vs/workbench/parts/files/browser/editors/fileEditorInput';
 import {TextFileEditor} from 'vs/workbench/parts/files/browser/editors/textFileEditor';
 import {BinaryFileEditor} from 'vs/workbench/parts/files/browser/editors/binaryFileEditor';
-import {IInstantiationService, INullService} from 'vs/platform/instantiation/common/instantiation';
+import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {SyncDescriptor, AsyncDescriptor} from 'vs/platform/instantiation/common/descriptors';
 import {IKeybindings} from 'vs/platform/keybinding/common/keybindingService';
 import {IViewletService} from 'vs/workbench/services/viewlet/common/viewletService';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {KeyMod, KeyCode} from 'vs/base/common/keyCodes';
+import * as platform from 'vs/base/common/platform';
 
 // Viewlet Action
 export class OpenExplorerViewletAction extends ToggleViewletAction {
@@ -71,6 +71,7 @@ let openViewletKb: IKeybindings = {
 const registry = <IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions);
 registry.registerWorkbenchAction(
 	new SyncActionDescriptor(OpenExplorerViewletAction, OpenExplorerViewletAction.ID, OpenExplorerViewletAction.LABEL, openViewletKb),
+	'View: Show Explorer',
 	nls.localize('view', "View")
 );
 
@@ -129,7 +130,7 @@ interface ISerializedFileInput {
 // Register Editor Input Factory
 class FileEditorInputFactory implements IEditorInputFactory {
 
-	constructor(@INullService ns) { }
+	constructor() { }
 
 	public serialize(editorInput: EditorInput): string {
 		let fileEditorInput = <FileEditorInput>editorInput;
@@ -170,10 +171,9 @@ configurationRegistry.registerConfiguration({
 	'type': 'object',
 	'properties': {
 		'files.exclude': {
-			'id': 'glob-pattern',
 			'type': 'object',
 			'description': nls.localize('exclude', "Configure glob patterns for excluding files and folders."),
-			'default': { '**/.git': true, '**/.DS_Store': true },
+			'default': { '**/.git': true, '**/.svn': true, '**/.DS_Store': true },
 			'additionalProperties': {
 				'anyOf': [
 					{
@@ -194,11 +194,24 @@ configurationRegistry.registerConfiguration({
 				]
 			}
 		},
+		'files.associations': {
+			'type': 'object',
+			'description': nls.localize('associations', "Configure file associations to languages (e.g. \"*.extension\": \"html\"). These have precedence over the default associations of the languages installed."),
+		},
 		'files.encoding': {
 			'type': 'string',
 			'enum': Object.keys(SUPPORTED_ENCODINGS),
 			'default': 'utf8',
 			'description': nls.localize('encoding', "The default character set encoding to use when reading and writing files."),
+		},
+		'files.eol': {
+			'type': 'string',
+			'enum': [
+				'\n',
+				'\r\n'
+			],
+			'default': (platform.isLinux || platform.isMacintosh) ? '\n' : '\r\n',
+			'description': nls.localize('eol', "The default end of line character."),
 		},
 		'files.trimTrailingWhitespace': {
 			'type': 'boolean',
@@ -215,6 +228,11 @@ configurationRegistry.registerConfiguration({
 			'type': 'number',
 			'default': 1000,
 			'description': nls.localize('autoSaveDelay', "Controls the delay in ms after which a dirty file is saved automatically. Only applies when \"files.autoSave\" is set to \"{0}\"", AutoSaveConfiguration.AFTER_DELAY)
+		},
+		'files.watcherExclude': {
+			'type': 'object',
+			'default': (platform.isLinux || platform.isMacintosh) ? { '**/.git/objects/**': true, '**/node_modules/**': true } : { '**/.git/objects/**': true },
+			'description': nls.localize('watcherExclude', "Configure glob patterns of file paths to exclude from file watching. Changing this setting requires a restart. When you experience Code consuming lots of cpu time on startup, you can exclude large folders to reduce the initial load.")
 		}
 	}
 });
@@ -233,6 +251,11 @@ configurationRegistry.registerConfiguration({
 		'explorer.workingFiles.dynamicHeight': {
 			'type': 'boolean',
 			'description': nls.localize('dynamicHeight', "Controls if the height of the working files section should adapt dynamically to the number of elements or not."),
+			'default': true
+		},
+		'explorer.autoReveal': {
+			'type': 'boolean',
+			'description': nls.localize('autoReveal', "Controls if the explorer should automatically reveal files when opening them."),
 			'default': true
 		}
 	}
@@ -269,4 +292,4 @@ class OpenWorkingFileByNameAction extends QuickOpenAction {
 
 registry.registerWorkbenchAction(new SyncActionDescriptor(OpenWorkingFileByNameAction, OpenWorkingFileByNameAction.ID, OpenWorkingFileByNameAction.LABEL, {
 	primary: KeyMod.chord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyMod.CtrlCmd | KeyCode.KEY_P)
-}), nls.localize('filesCategory', "Files"));
+}), 'Files: Open Working File by Name', nls.localize('filesCategory', "Files"));

@@ -4,40 +4,30 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import assert = require('assert');
-import Model = require('vs/editor/common/model/model');
+import * as assert from 'assert';
+import {EditOperation} from 'vs/editor/common/core/editOperation';
 import {Position} from 'vs/editor/common/core/position';
 import {Range} from 'vs/editor/common/core/range';
-import ModelModes = require('vs/editor/test/common/testModes');
-import EditorCommon = require('vs/editor/common/editorCommon');
-import {EditOperation} from 'vs/editor/common/core/editOperation';
+import {EventType, IModelContentChangedEvent, IModelContentChangedFlushEvent} from 'vs/editor/common/editorCommon';
+import {Model} from 'vs/editor/common/model/model';
+import {BracketMode} from 'vs/editor/test/common/testModes';
 
 // --------- utils
 
-function isNotABracket(model, lineNumber, column) {
+function isNotABracket(model:Model, lineNumber:number, column:number) {
 	var match = model.matchBracket(new Position(lineNumber, column));
-	assert.equal(match.isAccurate, true, 'is not matching brackets at ' + lineNumber + ', ' + column);
-	assert.equal(match.brackets, null, 'is not matching brackets at ' + lineNumber + ', ' + column);
+	assert.equal(match, null, 'is not matching brackets at ' + lineNumber + ', ' + column);
 }
 
-function isBracket(model, lineNumber1, column11, column12, lineNumber2, column21, column22) {
+function isBracket(model:Model, lineNumber1:number, column11:number, column12:number, lineNumber2:number, column21:number, column22:number) {
 	var match = model.matchBracket(new Position(lineNumber1, column11));
-	assert.deepEqual(match, {
-		brackets: [
-			new Range(lineNumber1, column11, lineNumber1, column12),
-			new Range(lineNumber2, column21, lineNumber2, column22)
-		],
-		isAccurate: true
-	}, 'is matching brackets at ' + lineNumber1 + ', ' + column11);
+	assert.deepEqual(match, [
+		new Range(lineNumber1, column11, lineNumber1, column12),
+		new Range(lineNumber2, column21, lineNumber2, column22)
+	], 'is matching brackets at ' + lineNumber1 + ', ' + column11);
 }
 
-
-
-function positionEqual(position, lineNumber, column) {
-	assert.deepEqual(position, new Position(lineNumber, column));
-}
-
-function rangeEqual(range, startLineNumber, startColumn, endLineNumber, endColumn) {
+function rangeEqual(range:Range, startLineNumber:number, startColumn:number, endLineNumber:number, endColumn:number) {
 	assert.deepEqual(range, new Range(startLineNumber, startColumn, endLineNumber, endColumn));
 }
 
@@ -50,7 +40,7 @@ var LINE5 = '1';
 
 suite('Editor Model - Model', () => {
 
-	var thisModel: Model.Model;
+	var thisModel: Model;
 
 	setup(() => {
 		var text =
@@ -59,7 +49,7 @@ suite('Editor Model - Model', () => {
 			LINE3 + '\n' +
 			LINE4 + '\r\n' +
 			LINE5;
-		thisModel = new Model.Model(text, null);
+		thisModel = new Model(text, Model.DEFAULT_CREATION_OPTIONS, null);
 	});
 
 	teardown(() => {
@@ -119,7 +109,7 @@ suite('Editor Model - Model', () => {
 	// --------- insert text eventing
 
 	test('model insert empty text does not trigger eventing', () => {
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			assert.ok(false, 'was not expecting event');
 		});
 		thisModel.applyEdits([EditOperation.insert(new Position(1, 1), '')]);
@@ -127,9 +117,9 @@ suite('Editor Model - Model', () => {
 
 	test('model insert text without newline eventing', () => {
 		var listenerCalls = 0;
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			listenerCalls++;
-			assert.equal(e.changeType, EditorCommon.EventType.ModelContentChangedLineChanged);
+			assert.equal(e.changeType, EventType.ModelContentChangedLineChanged);
 			assert.equal(e.lineNumber, 1);
 		});
 		thisModel.applyEdits([EditOperation.insert(new Position(1, 1), 'foo ')]);
@@ -140,10 +130,10 @@ suite('Editor Model - Model', () => {
 		var listenerCalls = 0;
 		var order = 0;
 
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			listenerCalls++;
 
-			if (e.changeType === EditorCommon.EventType.ModelContentChangedLineChanged) {
+			if (e.changeType === EventType.ModelContentChangedLineChanged) {
 				if (order === 0) {
 					assert.equal(++order, 1, 'ModelContentChangedLineChanged first');
 					assert.equal(e.lineNumber, 1, 'ModelContentChangedLineChanged line number 1');
@@ -151,7 +141,7 @@ suite('Editor Model - Model', () => {
 					assert.equal(++order, 2, 'ModelContentChangedLineChanged first');
 					assert.equal(e.lineNumber, 1, 'ModelContentChangedLineChanged line number 1');
 				}
-			} else if (e.changeType === EditorCommon.EventType.ModelContentChangedLinesInserted) {
+			} else if (e.changeType === EventType.ModelContentChangedLinesInserted) {
 				assert.equal(++order, 3, 'ModelContentChangedLinesInserted second');
 				assert.equal(e.fromLineNumber, 2, 'ModelContentChangedLinesInserted fromLineNumber');
 				assert.equal(e.toLineNumber, 2, 'ModelContentChangedLinesInserted toLineNumber');
@@ -216,7 +206,7 @@ suite('Editor Model - Model', () => {
 	// --------- delete text eventing
 
 	test('model delete empty text does not trigger eventing', () => {
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			assert.ok(false, 'was not expecting event');
 		});
 		thisModel.applyEdits([EditOperation.delete(new Range(1, 1, 1, 1))]);
@@ -224,9 +214,9 @@ suite('Editor Model - Model', () => {
 
 	test('model delete text from one line eventing', () => {
 		var listenerCalls = 0;
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			listenerCalls++;
-			assert.equal(e.changeType, EditorCommon.EventType.ModelContentChangedLineChanged);
+			assert.equal(e.changeType, EventType.ModelContentChangedLineChanged);
 			assert.equal(e.lineNumber, 1);
 		});
 		thisModel.applyEdits([EditOperation.delete(new Range(1, 1, 1, 2))]);
@@ -235,9 +225,9 @@ suite('Editor Model - Model', () => {
 
 	test('model delete all text from a line eventing', () => {
 		var listenerCalls = 0;
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			listenerCalls++;
-			assert.equal(e.changeType, EditorCommon.EventType.ModelContentChangedLineChanged);
+			assert.equal(e.changeType, EventType.ModelContentChangedLineChanged);
 			assert.equal(e.lineNumber, 1);
 		});
 		thisModel.applyEdits([EditOperation.delete(new Range(1, 1, 1, 14))]);
@@ -247,10 +237,10 @@ suite('Editor Model - Model', () => {
 	test('model delete text from two lines eventing', () => {
 		var listenerCalls = 0;
 		var order = 0;
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			listenerCalls++;
 
-			if (e.changeType === EditorCommon.EventType.ModelContentChangedLineChanged) {
+			if (e.changeType === EventType.ModelContentChangedLineChanged) {
 				if (order === 0) {
 					assert.equal(++order, 1);
 					assert.equal(e.lineNumber, 1);
@@ -258,7 +248,7 @@ suite('Editor Model - Model', () => {
 					assert.equal(++order, 2);
 					assert.equal(e.lineNumber, 1);
 				}
-			} else if (e.changeType === EditorCommon.EventType.ModelContentChangedLinesDeleted) {
+			} else if (e.changeType === EventType.ModelContentChangedLinesDeleted) {
 				assert.equal(++order, 3);
 				assert.equal(e.fromLineNumber, 2);
 				assert.equal(e.toLineNumber, 2);
@@ -275,10 +265,10 @@ suite('Editor Model - Model', () => {
 		var listenerCalls = 0;
 		var order = 0;
 
-		thisModel.addListener(EditorCommon.EventType.ModelContentChanged, (e) => {
+		thisModel.addListener(EventType.ModelContentChanged, (e) => {
 			listenerCalls++;
 
-			if (e.changeType === EditorCommon.EventType.ModelContentChangedLineChanged) {
+			if (e.changeType === EventType.ModelContentChangedLineChanged) {
 				if (order === 0) {
 					assert.equal(++order, 1);
 					assert.equal(e.lineNumber, 1);
@@ -286,7 +276,7 @@ suite('Editor Model - Model', () => {
 					assert.equal(++order, 2);
 					assert.equal(e.lineNumber, 1);
 				}
-			} else if (e.changeType === EditorCommon.EventType.ModelContentChangedLinesDeleted) {
+			} else if (e.changeType === EventType.ModelContentChangedLinesDeleted) {
 				assert.equal(++order, 3);
 				assert.equal(e.fromLineNumber, 2);
 				assert.equal(e.toLineNumber, 3);
@@ -334,12 +324,12 @@ suite('Editor Model - Model', () => {
 	// --------- setValue
 	test('setValue eventing', () => {
 		var listenerCalls = 0;
-		thisModel.addOneTimeListener(EditorCommon.EventType.ModelContentChanged, (e:EditorCommon.IModelContentChangedEvent) => {
+		thisModel.addOneTimeListener(EventType.ModelContentChanged, (e:IModelContentChangedEvent) => {
 			listenerCalls++;
 
-			assert.equal(e.changeType, EditorCommon.EventType.ModelContentChangedFlush);
+			assert.equal(e.changeType, EventType.ModelContentChangedFlush);
 
-			assert.deepEqual((<EditorCommon.IModelContentChangedFlushEvent>e).detail.lines, [ 'new value' ]);
+			assert.deepEqual((<IModelContentChangedFlushEvent>e).detail.lines, [ 'new value' ]);
 		});
 		thisModel.setValue('new value');
 		assert.equal(listenerCalls, 1, 'listener calls');
@@ -356,7 +346,7 @@ suite('Editor Model - Model', () => {
 // --------- Special Unicode LINE SEPARATOR character
 suite('Editor Model - Model Line Separators', () => {
 
-	var thisModel: Model.Model;
+	var thisModel: Model;
 
 	setup(() => {
 		var text =
@@ -365,7 +355,7 @@ suite('Editor Model - Model Line Separators', () => {
 			LINE3 + '\u2028' +
 			LINE4 + '\r\n' +
 			LINE5;
-		thisModel = new Model.Model(text, null);
+		thisModel = new Model(text, Model.DEFAULT_CREATION_OPTIONS, null);
 	});
 
 	teardown(() => {
@@ -381,7 +371,7 @@ suite('Editor Model - Model Line Separators', () => {
 	});
 
 	test('Bug 13333:Model should line break on lonely CR too', () => {
-		var model = new Model.Model("Hello\rWorld!\r\nAnother line", null);
+		var model = new Model('Hello\rWorld!\r\nAnother line', Model.DEFAULT_CREATION_OPTIONS, null);
 		assert.equal(model.getLineCount(), 3);
 		assert.equal(model.getValue(), 'Hello\r\nWorld!\r\nAnother line');
 		model.dispose();
@@ -389,12 +379,12 @@ suite('Editor Model - Model Line Separators', () => {
 });
 
 
-// --------- Bracket matching
+// --------- bracket matching
 
-suite('Editor Model - Bracket Matching', () => {
+suite('Editor Model - bracket Matching', () => {
 
-	var thisModel: Model.Model;
-	var bracketMode = new ModelModes.BracketMode();
+	var thisModel: Model;
+	var bracketMode = new BracketMode();
 
 	setup(() => {
 		var text =
@@ -403,14 +393,14 @@ suite('Editor Model - Bracket Matching', () => {
 			'}, bar: {hallo: [{' + '\n' +
 			'}, {' + '\n' +
 			'}]}}';
-		thisModel = new Model.Model(text, bracketMode);
+		thisModel = new Model(text, Model.DEFAULT_CREATION_OPTIONS, bracketMode);
 	});
 
 	teardown(() => {
 		thisModel.destroy();
 	});
 
-	test('Model Bracket matching 1', () => {
+	test('Model bracket matching 1', () => {
 
 		var brackets = [
 			[1, 11, 12, 5, 4, 5],
@@ -459,23 +449,23 @@ suite('Editor Model - Bracket Matching', () => {
 });
 
 
-suite('Editor Model - Bracket Matching 2', () => {
+suite('Editor Model - bracket Matching 2', () => {
 
-	var thisModel: Model.Model;
-	var bracketMode = new ModelModes.BracketMode();
+	var thisModel: Model;
+	var bracketMode = new BracketMode();
 
 	setup(() => {
 		var text =
 			')]}{[(' + '\n' +
 			')]}{[(';
-		thisModel = new Model.Model(text, bracketMode);
+		thisModel = new Model(text, Model.DEFAULT_CREATION_OPTIONS, bracketMode);
 	});
 
 	teardown(() => {
 		thisModel.destroy();
 	});
 
-	test('Model Bracket matching', () => {
+	test('Model bracket matching', () => {
 		isNotABracket(thisModel, 1, 1);
 		isNotABracket(thisModel, 1, 2);
 		isNotABracket(thisModel, 1, 3);
@@ -499,32 +489,15 @@ suite('Editor Model - Bracket Matching 2', () => {
 
 suite('Editor Model - Words', () => {
 
-	var thisModel: Model.Model;
+	var thisModel: Model;
 
 	setup(() => {
 		var text = [ 'This text has some  words. ' ];
-		thisModel = new Model.Model(text.join('\n'), null);
+		thisModel = new Model(text.join('\n'), Model.DEFAULT_CREATION_OPTIONS, null);
 	});
 
 	teardown(() => {
 		thisModel.destroy();
-	});
-
-	test('Get all words', () => {
-		var words = [
-			{ start: 0,		end: 4 },
-			{ start: 5,		end: 9 },
-			{ start: 10,	end: 13 },
-			{ start: 14,	end: 18 },
-			{ start: 20,	end: 25 },
-			{ start: 25,	end: 26 }
-		];
-
-		var modelWords = thisModel.getWords(1);
-
-		for (var i = 0; i < modelWords.length; i++) {
-			assert.deepEqual(modelWords[i], words[i]);
-		}
 	});
 
 	test('Get word at position', () => {
@@ -546,7 +519,7 @@ suite('Editor Model - Words', () => {
 // --------- Find
 suite('Editor Model - Find', () => {
 
-	var thisModel: Model.Model;
+	var thisModel: Model;
 
 	setup(() => {
 		var text = [
@@ -556,7 +529,7 @@ suite('Editor Model - Find', () => {
 			'It is also interesting if it\'s part of a word like amazingFooBar',
 			'Again nothing interesting here'
 		];
-		thisModel = new Model.Model(text.join('\n'), null);
+		thisModel = new Model(text.join('\n'), Model.DEFAULT_CREATION_OPTIONS, null);
 	});
 
 	teardown(() => {
@@ -642,7 +615,7 @@ suite('Editor Model - Find', () => {
 			'',
 			'Again nothing interesting here'
 		];
-		var model = new Model.Model(text.join('\n'), null);
+		var model = new Model(text.join('\n'), Model.DEFAULT_CREATION_OPTIONS, null);
 
 		var ranges = [
 			[2, 1, 2, 1],

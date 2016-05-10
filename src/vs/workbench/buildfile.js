@@ -20,15 +20,12 @@ exports.collectModules= function(excludes) {
 	var languageWorkerExcludes = ['vs/base/common/worker/workerServer', 'vs/editor/common/worker/editorWorkerServer'];
 
 	return [
-		createModuleDescription('vs/workbench/electron-main/main', []),
-		createModuleDescription('vs/workbench/electron-main/cli', []),
-
 		createModuleDescription('vs/workbench/parts/search/browser/searchViewlet', excludes),
 		createModuleDescription('vs/workbench/parts/search/browser/openAnythingHandler', excludes),
 
 		createModuleDescription('vs/workbench/parts/git/browser/gitViewlet', excludes),
-		createModuleDescription('vs/workbench/parts/git/electron-browser/gitApp', []),
-		createModuleDescription('vs/workbench/parts/git/electron-main/askpass', []),
+		createModuleDescription('vs/workbench/parts/git/node/gitApp', []),
+		createModuleDescription('vs/workbench/parts/git/node/askpass', []),
 
 		createModuleDescription('vs/workbench/parts/output/common/outputMode', languageMainExcludes),
 		createModuleDescription('vs/workbench/parts/output/common/outputWorker', languageWorkerExcludes),
@@ -42,8 +39,6 @@ exports.collectModules= function(excludes) {
 		createModuleDescription('vs/workbench/services/search/node/searchApp', []),
 		createModuleDescription('vs/workbench/services/files/node/watcher/unix/watcherApp', []),
 
-		createModuleDescription('vs/workbench/node/pluginHostProcess', []),
-
-		createModuleDescription('vs/workbench/electron-main/sharedProcessMain', [])
+		createModuleDescription('vs/workbench/node/extensionHostProcess', []),
 	];
 };

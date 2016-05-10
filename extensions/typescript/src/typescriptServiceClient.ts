@@ -12,11 +12,16 @@ import * as fs from 'fs';
 import * as electron from './utils/electron';
 import { Reader } from './utils/wireProtocol';
 
-import { workspace, window, Uri, CancellationToken }  from 'vscode';
+import { workspace, window, Uri, CancellationToken, OutputChannel }  from 'vscode';
 import * as Proto from './protocol';
 import { ITypescriptServiceClient, ITypescriptServiceClientHost }  from './typescriptService';
 
-import * as SalsaStatus from './utils/salsaStatus';
+import * as VersionStatus from './utils/versionStatus';
+
+import TelemetryReporter from 'vscode-extension-telemetry';
+
+import * as nls from 'vscode-nls';
+let localize = nls.loadMessageBundle();
 
 interface CallbackItem {
 	c: (value: any) => void;
@@ -34,15 +39,41 @@ interface RequestItem {
 	callbacks: CallbackItem;
 }
 
-export default class TypeScriptServiceClient implements ITypescriptServiceClient {
+interface IPackageInfo {
+	name: string;
+	version: string;
+	aiKey: string;
+}
 
-	public static Trace: boolean = process.env.TSS_TRACE || false;
+enum Trace {
+	Off, Messages, Verbose
+}
+
+namespace Trace {
+	export function fromString(value: string): Trace {
+		value = value.toLowerCase();
+		switch (value) {
+			case 'off':
+				return Trace.Off;
+			case 'messages':
+				return Trace.Messages;
+			case 'verbose':
+				return Trace.Verbose;
+			default:
+				return Trace.Off;
+		}
+	}
+}
+
+export default class TypeScriptServiceClient implements ITypescriptServiceClient {
 
 	private host: ITypescriptServiceClientHost;
 	private pathSeparator: string;
 
 	private _onReady: { promise: Promise<void>; resolve: () => void; reject: () => void; };
 	private tsdk: string;
+	private trace: Trace;
+	private output: OutputChannel;
 	private servicePromise: Promise<cp.ChildProcess>;
 	private lastError: Error;
 	private reader: Reader<Proto.Response>;
@@ -55,6 +86,9 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 	private requestQueue: RequestItem[];
 	private pendingResponses: number;
 	private callbacks: CallbackMap;
+
+	private _packageInfo: IPackageInfo;
+	private telemetryReporter: TelemetryReporter;
 
 	constructor(host: ITypescriptServiceClientHost) {
 		this.host = host;
@@ -76,22 +110,60 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 		this.pendingResponses = 0;
 		this.callbacks = Object.create(null);
 		this.tsdk = workspace.getConfiguration().get<string>('typescript.tsdk', null);
+		this.trace = this.readTrace();
 		workspace.onDidChangeConfiguration(() => {
+			this.trace = this.readTrace();
 			let oldTask = this.tsdk;
 			this.tsdk = workspace.getConfiguration().get<string>('typescript.tsdk', null);
 			if (this.servicePromise === null && oldTask !== this.tsdk) {
 				this.startService();
 			}
 		});
+		if (this.packageInfo && this.packageInfo.aiKey) {
+			this.telemetryReporter = new TelemetryReporter(this.packageInfo.name, this.packageInfo.version, this.packageInfo.aiKey);
+		}
 		this.startService();
+	}
+
+	private readTrace(): Trace {
+		let result: Trace = Trace.fromString(workspace.getConfiguration().get<string>('typescript.tsserver.trace', 'off'));
+		if (result === Trace.Off && !!process.env.TSS_TRACE) {
+			result = Trace.Messages;
+		}
+		if (result !== Trace.Off && !this.output) {
+			this.output = window.createOutputChannel(localize('channelName', 'TypeScript'));
+		}
+		return result;
 	}
 
 	public onReady(): Promise<void> {
 		return this._onReady.promise;
 	}
 
-	public get trace(): boolean {
-		return TypeScriptServiceClient.Trace;
+	private get packageInfo(): IPackageInfo {
+
+		if (this._packageInfo !== undefined) {
+			return this._packageInfo;
+		}
+		let packagePath = path.join(__dirname, './../package.json');
+		let extensionPackage = require(packagePath);
+		if (extensionPackage) {
+			this._packageInfo = {
+				name: extensionPackage.name,
+				version: extensionPackage.version,
+				aiKey: extensionPackage.aiKey
+			};
+		} else {
+			this._packageInfo = null;
+		}
+
+		return this._packageInfo;
+	}
+
+	public logTelemetry(eventName: string, properties?: {[prop: string]: string}) {
+		if (this.telemetryReporter) {
+			this.telemetryReporter.sendTelemetryEvent(eventName, properties);
+		}
 	}
 
 	private service(): Promise<cp.ChildProcess> {
@@ -107,7 +179,6 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 
 	private startService(resendModels: boolean = false): void {
 		let modulePath = path.join(__dirname, '..', 'server', 'typescript', 'lib', 'tsserver.js');
-		let useSalsa = !!process.env['CODE_TSJS'] || !!process.env['VSCODE_TSJS'];
 
 		if (this.tsdk) {
 			if ((<any>path).isAbsolute(this.tsdk)) {
@@ -115,30 +186,17 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 			} else if (workspace.rootPath) {
 				modulePath = path.join(workspace.rootPath, this.tsdk, 'tsserver.js');
 			}
-		} else if (useSalsa) {
-			let candidate = path.join(workspace.rootPath, 'node_modules', 'typescript', 'lib', 'tsserver.js');
-			if (fs.existsSync(candidate)) {
-				modulePath = candidate;
-			}
 		}
+
 		if (!fs.existsSync(modulePath)) {
-			window.showErrorMessage(`The path ${path.dirname(modulePath)} doesn't point to a valid tsserver install. TypeScript language features will be disabled.`);
+			window.showErrorMessage(localize('noServerFound', 'The path {0} doesn\'t point to a valid tsserver install. TypeScript language features will be disabled.', path.dirname(modulePath)));
 			return;
 		}
 
-		if (useSalsa) {
-			let versionOK = this.isTypeScriptVersionOkForSalsa(modulePath);
-			let tooltip = modulePath;
-			let label;
-			if (!versionOK) {
-				label = '(Salsa !)';
-				tooltip = `${tooltip} does not support Salsa!`;
-			} else {
-				label = '(Salsa)';
-				tooltip = `${tooltip} does support Salsa.`;
-			}
-			SalsaStatus.show(label, tooltip, !versionOK);
-		}
+		let label = this.getTypeScriptVersion(modulePath);
+		let tooltip = modulePath;
+		VersionStatus.enable(!!this.tsdk);
+		VersionStatus.setInfo(label, tooltip);
 
 		this.servicePromise = new Promise<cp.ChildProcess>((resolve, reject) => {
 			try {
@@ -155,7 +213,8 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 				electron.fork(modulePath, [], options, (err: any, childProcess: cp.ChildProcess) => {
 					if (err) {
 						this.lastError = err;
-						window.showErrorMessage(`TypeScript language server couldn\'t be started. Error message is: ${err.message}`);
+						window.showErrorMessage(localize('serverCouldNotBeStarted', 'TypeScript language server couldn\'t be started. Error message is: {0}', err.message || err));
+						this.logTelemetry('error', {message: err.message});
 						return;
 					}
 					this.lastStart = Date.now();
@@ -174,7 +233,6 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 				});
 			} catch (error) {
 				reject(error);
-				this._onReady.reject();
 			}
 		});
 		this.serviceStarted(resendModels);
@@ -186,29 +244,29 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 		}
 	}
 
-	private isTypeScriptVersionOkForSalsa(serverPath: string): boolean {
+	private getTypeScriptVersion(serverPath: string): string {
+		const custom = localize('versionNumber.custom' ,'custom');
 		let p = serverPath.split(path.sep);
 		if (p.length <= 2) {
-			return true; // assume OK, cannot check
+			return custom;
 		}
 		let p2 = p.slice(0, -2);
 		let modulePath = p2.join(path.sep);
 		let fileName = path.join(modulePath, 'package.json');
 		if (!fs.existsSync(fileName)) {
-			return true; // assume OK, cannot check
+			return custom;
 		}
 		let contents = fs.readFileSync(fileName).toString();
 		let desc = null;
 		try {
 			desc = JSON.parse(contents);
 		} catch(err) {
-			return true;
+			return custom;
 		}
 		if (!desc.version) {
-			return true;
+			return custom;
 		}
-		// just use a string compare, don't want to add a dependency on semver
-		return desc.version.indexOf('1.8') >= 0 || desc.version.indexOf('1.9') >= 0 ;
+		return desc.version;
 	}
 
 	private serviceExited(restart: boolean): void {
@@ -223,10 +281,11 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 			let startService = true;
 			if (this.numberRestarts > 5) {
 				if (diff < 60 * 1000 /* 1 Minutes */) {
-					window.showWarningMessage('The Typescript language service died unexpectedly 5 times in the last 5 Minutes. Please consider to open a bug report.');
+					window.showWarningMessage(localize('serverDied','The Typescript language service died unexpectedly 5 times in the last 5 Minutes. Please consider to open a bug report.'));
 				} else if (diff < 2 * 1000 /* 2 seconds */) {
 					startService = false;
-					window.showErrorMessage('The Typesrript language service died 5 times right after it got started. The service will not be restarted. Please open a bug report.');
+					window.showErrorMessage(localize('serverDiedAfterStart', 'The Typesrript language service died 5 times right after it got started. The service will not be restarted. Please open a bug report.'));
+					this.logTelemetry('serviceExited');
 				}
 			}
 			if (startService) {
@@ -296,9 +355,7 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 
 	private sendRequest(requestItem: RequestItem): void {
 		let serverRequest = requestItem.request;
-		if (TypeScriptServiceClient.Trace) {
-			console.log('TypeScript Service: sending request ' + serverRequest.command + '(' + serverRequest.seq + '). Response expected: ' + (requestItem.callbacks ? 'yes' : 'no') + '. Current queue length: ' + this.requestQueue.length);
-		}
+		this.traceRequest(serverRequest, !!requestItem.callbacks);
 		if (requestItem.callbacks) {
 			this.callbacks[serverRequest.seq] = requestItem.callbacks;
 			this.pendingResponses++;
@@ -319,14 +376,14 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 		for (let i = 0; i < this.requestQueue.length; i++) {
 			if (this.requestQueue[i].request.seq === seq) {
 				this.requestQueue.splice(i, 1);
-				if (TypeScriptServiceClient.Trace) {
-					console.log('TypeScript Service: canceled request with sequence number ' + seq);
+				if (this.trace !== Trace.Off) {
+					this.output.append(`TypeScript Service: canceled request with sequence number ${seq}\n`);
 				}
 				return true;
 			}
 		}
-		if (TypeScriptServiceClient.Trace) {
-			console.log('TypeScript Service: tried to cancel request with sequence number ' + seq + '. But request got already delivered.');
+		if (this.trace !== Trace.Off) {
+			this.output.append(`TypeScript Service: tried to cancel request with sequence number ${seq}. But request got already delivered.`);
 		}
 		return false;
 	}
@@ -337,19 +394,23 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 				let response: Proto.Response = <Proto.Response>message;
 				let p = this.callbacks[response.request_seq];
 				if (p) {
-					if (TypeScriptServiceClient.Trace) {
-						console.log('TypeScript Service: request ' + response.command + '(' + response.request_seq + ') took ' + (Date.now() - p.start) + 'ms. Success: ' + response.success + ((!response.success) ? ('. Message: ' + response.message) : ''));
-					}
+					this.traceResponse(response, p.start);
 					delete this.callbacks[response.request_seq];
 					this.pendingResponses--;
 					if (response.success) {
 						p.c(response);
 					} else {
+						this.logTelemetry('requestFailed', {
+							id: response.request_seq.toString(),
+							command: response.command,
+							message: response.message ? response.message : 'No detailed message provided'
+						});
 						p.e(response);
 					}
 				}
 			} else if (message.type === 'event') {
 				let event: Proto.Event = <Proto.Event>message;
+				this.traceEvent(event);
 				if (event.event === 'syntaxDiag') {
 					this.host.syntaxDiagnosticsReceived(event);
 				}
@@ -361,6 +422,36 @@ export default class TypeScriptServiceClient implements ITypescriptServiceClient
 			}
 		} finally {
 			this.sendNextRequests();
+		}
+	}
+
+	private traceRequest(request: Proto.Request, responseExpected: boolean): void {
+		if (this.trace === Trace.Off) {
+			return;
+		}
+		this.output.append(`Sending request: ${request.command} (${request.seq}). Response expected: ${responseExpected ? 'yes' : 'no'}. Current queue length: ${this.requestQueue.length}\n`);
+		if (this.trace === Trace.Verbose && request.arguments) {
+			this.output.append(`Arguments: ${JSON.stringify(request.arguments, null, 4)}\n\n`);
+		}
+	}
+
+	private traceResponse(response: Proto.Response, startTime: number): void {
+		if (this.trace === Trace.Off) {
+			return;
+		}
+		this.output.append(`Response received: ${response.command} (${response.request_seq}). Request took ${Date.now() - startTime} ms. Success: ${response.success} ${!response.success ? '. Message: ' + response.message : ''}\n`);
+		if (this.trace === Trace.Verbose && response.body) {
+			this.output.append(`Result: ${JSON.stringify(response.body, null, 4)}\n\n`);
+		}
+	}
+
+	private traceEvent(event: Proto.Event): void {
+		if (this.trace === Trace.Off) {
+			return;
+		}
+		this.output.append(`Event received: ${event.event} (${event.seq}).\n`);
+		if (this.trace === Trace.Verbose && event.body) {
+			this.output.append(`Data: ${JSON.stringify(event.body, null, 4)}\n\n`);
 		}
 	}
 }

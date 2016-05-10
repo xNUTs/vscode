@@ -5,23 +5,14 @@
 
 'use strict';
 
+import {illegalArgument, onUnexpectedError} from 'vs/base/common/errors';
 import URI from 'vs/base/common/uri';
-import {onUnexpectedError, illegalArgument} from 'vs/base/common/errors';
 import {TPromise} from 'vs/base/common/winjs.base';
 import {Range} from 'vs/editor/common/core/range';
 import {IModel} from 'vs/editor/common/editorCommon';
-import {IOutlineEntry, IOutlineSupport} from 'vs/editor/common/modes';
-import LanguageFeatureRegistry from 'vs/editor/common/modes/languageFeatureRegistry';
-import {IModelService} from 'vs/editor/common/services/modelService';
 import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
-
-const OutlineRegistry = new LanguageFeatureRegistry<IOutlineSupport>('outlineSupport');
-
-export {
-	OutlineRegistry,
-	IOutlineEntry,
-	IOutlineSupport
-}
+import {IOutlineEntry, OutlineRegistry} from 'vs/editor/common/modes';
+import {IModelService} from 'vs/editor/common/services/modelService';
 
 export interface IOutline {
 	entries: IOutlineEntry[];
@@ -36,10 +27,10 @@ export function getOutlineEntries(model: IModel): TPromise<IOutline> {
 	let promises = OutlineRegistry.all(model).map(support => {
 
 		if (support.outlineGroupLabel) {
-			for (var key in support.outlineGroupLabel) {
-				if (Object.prototype.hasOwnProperty.call(support.outlineGroupLabel, key)) {
-					groupLabels[key] = support.outlineGroupLabel[key];
-				}
+			let keys = Object.keys(support.outlineGroupLabel);
+			for (let i = 0, len = keys.length; i < len; i++) {
+				let key = keys[i];
+				groupLabels[key] = support.outlineGroupLabel[key];
 			}
 		}
 
@@ -65,7 +56,7 @@ export function getOutlineEntries(model: IModel): TPromise<IOutline> {
 }
 
 function compareEntriesUsingStart(a: IOutlineEntry, b: IOutlineEntry): number{
-	return Range.compareRangesUsingStarts(a.range, b.range);
+	return Range.compareRangesUsingStarts(Range.lift(a.range), Range.lift(b.range));
 }
 
 function flatten(bucket: IOutlineEntry[], entries: IOutlineEntry[], overrideContainerLabel: string): void {

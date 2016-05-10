@@ -90,9 +90,9 @@ statusBar.registerStatusbarItem(new StatusbarItemDescriptor(EditorStatus, Status
 
 // Register Actions
 let registry = <IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions);
-registry.registerWorkbenchAction(new SyncActionDescriptor(ChangeModeAction, ChangeModeAction.ID, ChangeModeAction.LABEL, { primary: KeyMod.chord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyCode.KEY_M) }));
-registry.registerWorkbenchAction(new SyncActionDescriptor(ChangeEOLAction, ChangeEOLAction.ID, ChangeEOLAction.LABEL));
-registry.registerWorkbenchAction(new SyncActionDescriptor(ChangeEncodingAction, ChangeEncodingAction.ID, ChangeEncodingAction.LABEL));
+registry.registerWorkbenchAction(new SyncActionDescriptor(ChangeModeAction, ChangeModeAction.ID, ChangeModeAction.LABEL, { primary: KeyMod.chord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyCode.KEY_M) }), 'Change Language Mode');
+registry.registerWorkbenchAction(new SyncActionDescriptor(ChangeEOLAction, ChangeEOLAction.ID, ChangeEOLAction.LABEL), 'Change End of Line Sequence');
+registry.registerWorkbenchAction(new SyncActionDescriptor(ChangeEncodingAction, ChangeEncodingAction.ID, ChangeEncodingAction.LABEL), 'Change File Encoding');
 
 
 export class ViewSourceEditorInputAction extends EditorInputAction {
@@ -124,6 +124,7 @@ export class RefreshIFrameEditorInputAction extends EditorInputAction {
 		let editor = this.editorService.getActiveEditor();
 		if (editor instanceof IFrameEditor) {
 			(<IFrameEditor>editor).reload(true);
+			(<IFrameEditor>editor).focus();
 		}
 
 		return TPromise.as(null);
@@ -156,7 +157,7 @@ actionBarRegistry.registerActionBarContributor(Scope.EDITOR, IFrameEditorActionC
 KeybindingsRegistry.registerCommandDesc({
 	id: 'workbench.action.compareEditor.nextChange',
 	weight: KeybindingsRegistry.WEIGHT.workbenchContrib(),
-	context: KbExpr.has('textCompareEditorVisible'),
+	when: KbExpr.has('textCompareEditorVisible'),
 	primary: KeyMod.chord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyMod.CtrlCmd | KeyCode.RightArrow),
 	handler: accessor => navigateInDiffEditor(accessor, true)
 });
@@ -164,7 +165,7 @@ KeybindingsRegistry.registerCommandDesc({
 KeybindingsRegistry.registerCommandDesc({
 	id: 'workbench.action.compareEditor.previousChange',
 	weight: KeybindingsRegistry.WEIGHT.workbenchContrib(),
-	context: KbExpr.has('textCompareEditorVisible'),
+	when: KbExpr.has('textCompareEditorVisible'),
 	primary: KeyMod.chord(KeyMod.CtrlCmd | KeyCode.KEY_K, KeyMod.CtrlCmd | KeyCode.LeftArrow),
 	handler: accessor => navigateInDiffEditor(accessor, false)
 });

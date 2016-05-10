@@ -4,6 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+import {LinkedMap} from 'vs/base/common/map';
+
 /**
  * The empty string.
  */
@@ -63,13 +65,6 @@ export function escape(html: string): string {
  */
 export function escapeRegExpCharacters(value: string): string {
 	return value.replace(/[\-\\\{\}\*\+\?\|\^\$\.\,\[\]\(\)\#\s]/g, '\\$&');
-}
-
-/**
- * Searches for all occurrences of needle in haystack and replaces them with replacement.
- */
-export function replaceAll(haystack: string, needle: string, replacement: string): string {
-	return haystack.replace(new RegExp(escapeRegExpCharacters(needle.toString()), 'g'), replacement);
 }
 
 /**
@@ -145,7 +140,7 @@ export function convertSimple2RegExpPattern(pattern: string): string {
 }
 
 export function stripWildcards(pattern: string): string {
-	return replaceAll(pattern, '*', '');
+	return pattern.replace(/\*/g, '');
 }
 
 /**
@@ -171,7 +166,7 @@ export function startsWith(haystack: string, needle: string): boolean {
 export function endsWith(haystack: string, needle: string): boolean {
 	let diff = haystack.length - needle.length;
 	if (diff > 0) {
-		return haystack.lastIndexOf(needle) === haystack.length - needle.length;
+		return haystack.lastIndexOf(needle) === diff;
 	} else if (diff === 0) {
 		return haystack === needle;
 	} else {
@@ -254,13 +249,15 @@ export function regExpLeadsToEndlessLoop(regexp: RegExp): boolean {
  */
 export let canNormalize = typeof ((<any>'').normalize) === 'function';
 const nonAsciiCharactersPattern = /[^\u0000-\u0080]/;
-export function normalizeNFC(str: string, cache?: { [str: string]: string }): string {
+const normalizedCache = new LinkedMap<string>(10000); // bounded to 10000 elements
+export function normalizeNFC(str: string): string {
 	if (!canNormalize || !str) {
 		return str;
 	}
 
-	if (cache && cache[str]) {
-		return cache[str];
+	const cached = normalizedCache.get(str);
+	if (cached) {
+		return cached;
 	}
 
 	let res: string;
@@ -270,41 +267,10 @@ export function normalizeNFC(str: string, cache?: { [str: string]: string }): st
 		res = str;
 	}
 
-	if (cache) {
-		cache[str] = res;
-	}
+	// Use the cache for fast lookup
+	normalizedCache.set(str, res);
 
 	return res;
-}
-
-export function isCamelCasePattern(pattern: string): boolean {
-	return (/^\w[\w.]*$/).test(pattern);
-}
-
-export function isFalsyOrWhitespace(s: string): boolean {
-	return !s || !s.trim();
-}
-
-export function anchorPattern(value: string, start: boolean, end: boolean): string {
-	if (start) {
-		value = '^' + value;
-	}
-
-	if (end) {
-		value = value + '$';
-	}
-
-	return value;
-}
-
-export function assertRegExp(pattern: string, modifiers: string): void {
-	if (regExpLeadsToEndlessLoop(new RegExp(pattern, modifiers))) {
-		throw new Error('Regular expression /' + pattern + '/g results in infinitive matches');
-	}
-}
-
-export function colorize(code: number, value: string): string {
-	return '\x1b[' + code + 'm' + value + '\x1b[0m';
 }
 
 /**
@@ -337,8 +303,8 @@ export function getLeadingWhitespace(str: string): string {
  * Returns last index of the string that is not whitespace.
  * If string is empty or contains only whitespaces, returns -1
  */
-export function lastNonWhitespaceIndex(str: string): number {
-	for (let i = str.length - 1; i >= 0; i--) {
+export function lastNonWhitespaceIndex(str: string, startIndex: number = str.length - 1): number {
+	for (let i = startIndex; i >= 0; i--) {
 		if (str.charAt(i) !== ' ' && str.charAt(i) !== '\t') {
 			return i;
 		}
@@ -487,6 +453,7 @@ export function isFullWidthCharacter(charCode:number): boolean {
 	//               of which FF01 - FF5E fullwidth ASCII of 21 to 7E
 	// [IGNORE]    and FF65 - FFDC halfwidth of Katakana and Hangul
 	// [IGNORE] FFF0 — FFFF   Specials
+	charCode = +charCode; // @perf
 	return (
 		(charCode >= 0x2E80 && charCode <= 0xD7AF)
 		|| (charCode >= 0xF900 && charCode <= 0xFAFF)
@@ -597,4 +564,35 @@ export const UTF8_BOM_CHARACTER = String.fromCharCode(__utf8_bom);
 
 export function startsWithUTF8BOM(str: string): boolean {
 	return (str && str.length > 0 && str.charCodeAt(0) === __utf8_bom);
+}
+
+/**
+ * Appends two strings. If the appended result is longer than maxLength,
+ * trims the start of the result and replaces it with '...'.
+ */
+export function appendWithLimit(first: string, second: string, maxLength: number): string {
+	const newLength = first.length + second.length;
+	if (newLength > maxLength) {
+		first = '...' + first.substr(newLength - maxLength);
+	}
+	if (second.length > maxLength) {
+		first += second.substr(second.length - maxLength);
+	} else {
+		first += second;
+	}
+
+	return first;
+}
+
+
+export function safeBtoa(str: string): string {
+	return btoa(encodeURIComponent(str)); // we use encodeURIComponent because btoa fails for non Latin 1 values
+}
+
+export function repeat(s:string, count: number): string {
+	var result = '';
+	for (var i = 0; i < count; i++) {
+		result += s;
+	}
+	return result;
 }

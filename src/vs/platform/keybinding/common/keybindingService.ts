@@ -4,11 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
-import {TypeConstraint} from 'vs/base/common/types';
-import {createDecorator, ServiceIdentifier, ServicesAccessor} from 'vs/platform/instantiation/common/instantiation';
-import {Keybinding} from 'vs/base/common/keyCodes';
 import {IHTMLContentElement} from 'vs/base/common/htmlContent';
+import {Keybinding} from 'vs/base/common/keyCodes';
+import {TypeConstraint} from 'vs/base/common/types';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {ServiceIdentifier, ServicesAccessor, createDecorator} from 'vs/platform/instantiation/common/instantiation';
 
 export interface IUserFriendlyKeybinding {
 	key: string;
@@ -76,8 +76,10 @@ export class KbEqualsExpression implements KbExpr {
 	}
 
 	public evaluate(context: any): boolean {
+		/* tslint:disable:triple-equals */
 		// Intentional ==
 		return (context[this.key] == this.value);
+		/* tslint:enable:triple-equals */
 	}
 
 	public normalize(): KbExpr {
@@ -111,8 +113,10 @@ export class KbNotEqualsExpression implements KbExpr {
 	}
 
 	public evaluate(context: any): boolean {
+		/* tslint:disable:triple-equals */
 		// Intentional !=
 		return (context[this.key] != this.value);
+		/* tslint:enable:triple-equals */
 	}
 
 	public normalize(): KbExpr {
@@ -282,13 +286,13 @@ export let KbExpr = {
 export interface IKeybindingItem {
 	keybinding: number;
 	command: string;
-	context: KbExpr;
+	when: KbExpr;
 	weight1: number;
 	weight2: number;
 }
 
 export interface ICommandHandler {
-	(accessor: ServicesAccessor, args: any): void;
+	(accessor: ServicesAccessor, ...args: any[]): void;
 	description?: string | ICommandHandlerDescription;
 }
 
@@ -327,9 +331,13 @@ export interface IKeybindingService {
 	customKeybindingsCount(): number;
 
 	getLabelFor(keybinding: Keybinding): string;
+	getAriaLabelFor(keybinding: Keybinding): string;
 	getHTMLLabelFor(keybinding: Keybinding): IHTMLContentElement[];
 	getElectronAcceleratorFor(keybinding: Keybinding): string;
 
-	executeCommand<T>(commandId: string, args?: any): TPromise<T>;
-	executeCommand(commandId: string, args?: any): TPromise<any>;
+	executeCommand<T>(commandId: string, ...args: any[]): TPromise<T>;
+	executeCommand(commandId: string, ...args: any[]): TPromise<any>;
+	hasCommand(commandId: string): boolean;
 }
+
+export const SET_CONTEXT_COMMAND_ID = 'setContext';

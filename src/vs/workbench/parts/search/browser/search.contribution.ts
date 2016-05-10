@@ -33,7 +33,7 @@ export const VIEWLET_ID = 'workbench.view.search';
 KeybindingsRegistry.registerCommandDesc({
 	id: 'workbench.action.search.toggleQueryDetails',
 	weight: KeybindingsRegistry.WEIGHT.workbenchContrib(),
-	context: KbExpr.has('searchViewletVisible'),
+	when: KbExpr.has('searchViewletVisible'),
 	primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_J,
 	handler: accessor => {
 		let viewletService = accessor.get(IViewletService);
@@ -124,6 +124,7 @@ const openSearchViewletKb: IKeybindings = {
 
 (<IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions)).registerWorkbenchAction(
 	new SyncActionDescriptor(OpenSearchViewletAction, OpenSearchViewletAction.ID, OpenSearchViewletAction.LABEL, openSearchViewletKb),
+	'View: Show Search',
 	nls.localize('view', "View")
 );
 
@@ -160,7 +161,7 @@ actionBarRegistry.registerActionBarContributor(Scope.VIEWER, ExplorerViewerActio
 const registry = <IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions);
 registry.registerWorkbenchAction(new SyncActionDescriptor(ShowAllSymbolsAction, ACTION_ID, ACTION_LABEL, {
 	primary: KeyMod.CtrlCmd | KeyCode.KEY_T
-}));
+}), 'Show All Symbols');
 
 // Configuration
 const configurationRegistry = <IConfigurationRegistry>Registry.as(ConfigurationExtensions.Configuration);
@@ -171,9 +172,8 @@ configurationRegistry.registerConfiguration({
 	'type': 'object',
 	'properties': {
 		'search.exclude': {
-			'id': 'glob-pattern',
 			'type': 'object',
-			'description': nls.localize('exclude', "Configure glob patterns for excluding files and folders in searches. Inherits all glob patterns from the file.exclude setting."),
+			'description': nls.localize('exclude', "Configure glob patterns for excluding files and folders in searches. Inherits all glob patterns from the files.exclude setting."),
 			'default': { '**/node_modules': true, '**/bower_components': true },
 			'additionalProperties': {
 				'anyOf': [

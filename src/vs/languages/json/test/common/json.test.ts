@@ -4,26 +4,38 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import 'vs/languages/json/common/json.contribution';
 import jsonMode = require('vs/languages/json/common/json');
-import EditorCommon = require('vs/editor/common/editorCommon');
 import Modes = require('vs/editor/common/modes');
 import modesUtil = require('vs/editor/test/common/modesUtil');
-import tokenization = require('vs/languages/json/common/features/tokenization');
 import jsonTokenTypes = require('vs/languages/json/common/features/jsonTokenTypes');
+import {NULL_THREAD_SERVICE} from 'vs/platform/test/common/nullThreadService';
+import {IThreadService} from 'vs/platform/thread/common/thread';
+import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
+import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
 
 suite('JSON - tokenization', () => {
 
 	var tokenizationSupport: Modes.ITokenizationSupport;
 	var assertOnEnter: modesUtil.IOnEnterAsserter;
 
-	setup((done) => {
-		modesUtil.load('json').then(mode => {
-			tokenizationSupport = mode.tokenizationSupport;
-			assertOnEnter = modesUtil.createOnEnterAsserter(mode.getId(), mode.richEditSupport);
-			done();
-		});
-	});
+	(function() {
+
+		let threadService = NULL_THREAD_SERVICE;
+		let services = new ServiceCollection();
+		services.set(IThreadService, threadService);
+		let inst = new InstantiationService(services);
+		threadService.setInstantiationService(inst);
+
+		let mode = new jsonMode.JSONMode(
+			{ id: 'json' },
+			inst,
+			threadService
+		);
+
+		tokenizationSupport = mode.tokenizationSupport;
+		assertOnEnter = modesUtil.createOnEnterAsserter(mode.getId(), mode.richEditSupport);
+
+	})();
 
 	test('', () => {
 		modesUtil.executeTests(tokenizationSupport,[
@@ -31,25 +43,25 @@ suite('JSON - tokenization', () => {
 			[{
 			line: '{',
 			tokens: [
-				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_OBJECT, bracket: Modes.Bracket.Open }
+				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_OBJECT }
 			]}],
 
 			[{
 			line: '[',
 			tokens: [
-				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_ARRAY, bracket: Modes.Bracket.Open }
+				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_ARRAY }
 			]}],
 
 			[{
 			line: '}',
 			tokens: [
-				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_OBJECT, bracket: Modes.Bracket.Close }
+				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_OBJECT }
 			]}],
 
 			[{
 			line: ']',
 			tokens: [
-				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_ARRAY, bracket: Modes.Bracket.Close }
+				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_ARRAY }
 			]}],
 
 			[{
@@ -145,21 +157,21 @@ suite('JSON - tokenization', () => {
 			[{
 			line: '{ "foo": "bar" }',
 			tokens: [
-				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_OBJECT, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_OBJECT },
 				{ startIndex:1, type: '' },
 				{ startIndex:2, type: jsonTokenTypes.TOKEN_PROPERTY_NAME },
 				{ startIndex:7, type: jsonTokenTypes.TOKEN_DELIM_COLON },
 				{ startIndex:8, type: '' },
 				{ startIndex:9, type: jsonTokenTypes.TOKEN_VALUE_STRING },
 				{ startIndex:14, type: '' },
-				{ startIndex:15, type: jsonTokenTypes.TOKEN_DELIM_OBJECT, bracket: Modes.Bracket.Close }
+				{ startIndex:15, type: jsonTokenTypes.TOKEN_DELIM_OBJECT }
 			]}],
 
 			// Arrays, keywords, and numbers
 			[{
 			line: '[-1.5e+4, true, false, null]',
 			tokens: [
-				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_ARRAY, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: jsonTokenTypes.TOKEN_DELIM_ARRAY },
 				{ startIndex:1, type: jsonTokenTypes.TOKEN_VALUE_NUMBER },
 				{ startIndex:8, type: jsonTokenTypes.TOKEN_DELIM_COMMA },
 				{ startIndex:9, type: '' },
@@ -170,7 +182,7 @@ suite('JSON - tokenization', () => {
 				{ startIndex:21, type: jsonTokenTypes.TOKEN_DELIM_COMMA },
 				{ startIndex:22, type: '' },
 				{ startIndex:23, type: jsonTokenTypes.TOKEN_VALUE_NULL },
-				{ startIndex:27, type: jsonTokenTypes.TOKEN_DELIM_ARRAY, bracket: Modes.Bracket.Close }
+				{ startIndex:27, type: jsonTokenTypes.TOKEN_DELIM_ARRAY }
 			]}]
 		]);
 	});

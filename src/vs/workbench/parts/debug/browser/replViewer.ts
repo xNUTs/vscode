@@ -44,7 +44,7 @@ export class ReplExpressionsDataSource implements tree.IDataSource {
 	}
 
 	public hasChildren(tree: tree.ITree, element: any): boolean {
-		return element instanceof model.Model || element.reference > 0  || (element instanceof model.KeyValueOutputElement && element.getChildren().length > 0);
+		return element instanceof model.Model || element.reference > 0 || (element instanceof model.KeyValueOutputElement && element.getChildren().length > 0);
 	}
 
 	public getChildren(tree: tree.ITree, element: any): TPromise<any> {
@@ -58,7 +58,7 @@ export class ReplExpressionsDataSource implements tree.IDataSource {
 			return TPromise.as(null);
 		}
 
-		return (<debug.IExpression> element).getChildren(this.debugService);
+		return (<debug.IExpression>element).getChildren(this.debugService);
 	}
 
 	public getParent(tree: tree.ITree, element: any): TPromise<any> {
@@ -338,8 +338,12 @@ export class ReplExpressionsRenderer implements tree.IRenderer {
 		for (let pattern of ReplExpressionsRenderer.FILE_LOCATION_PATTERNS) {
 			pattern.lastIndex = 0; // the holy grail of software development
 
-			var match = pattern.exec(text);
-			var resource = match && URI.file(match[1]);
+			const match = pattern.exec(text);
+			let resource = null;
+			try {
+				resource = match && URI.file(match[1]);
+			} catch (e) { }
+
 			if (resource) {
 				linkContainer = document.createElement('span');
 
@@ -370,7 +374,7 @@ export class ReplExpressionsRenderer implements tree.IRenderer {
 		return linkContainer || text;
 	}
 
-	private onLinkClick(event: mouse.StandardMouseEvent, resource: URI, line: number, column: number): void {
+	private onLinkClick(event: mouse.IMouseEvent, resource: URI, line: number, column: number): void {
 		const selection = window.getSelection();
 		if (selection.type === 'Range') {
 			return; // do not navigate when user is selecting
@@ -460,6 +464,7 @@ export class ReplExpressionsActionProvider implements renderer.IActionProvider {
 			actions.push(this.instantiationService.createInstance(debugactions.AddToWatchExpressionsAction, debugactions.AddToWatchExpressionsAction.ID, debugactions.AddToWatchExpressionsAction.LABEL, element));
 			actions.push(new actionbar.Separator());
 		}
+		actions.push(new debugactions.CopyAction(debugactions.CopyAction.ID, debugactions.CopyAction.LABEL));
 		actions.push(this.instantiationService.createInstance(debugactions.ClearReplAction, debugactions.ClearReplAction.ID, debugactions.ClearReplAction.LABEL));
 
 		return TPromise.as(actions);
@@ -485,7 +490,7 @@ export class ReplExpressionsController extends debugviewer.BaseDebugController {
 	}
 
 	protected onLeftClick(tree: tree.ITree, element: any, eventish: treedefaults.ICancelableEvent, origin: string = 'mouse'): boolean {
-		const mouseEvent = <mouse.StandardMouseEvent> eventish;
+		const mouseEvent = <mouse.IMouseEvent>eventish;
 		// input and output are one element in the tree => we only expand if the user clicked on the output.
 		if ((element.reference > 0 || (element instanceof model.KeyValueOutputElement && element.getChildren().length > 0)) && mouseEvent.target.className.indexOf('input expression') === -1) {
 			super.onLeftClick(tree, element, eventish, origin);
@@ -503,7 +508,7 @@ export class ReplExpressionsController extends debugviewer.BaseDebugController {
 		return true;
 	}
 
-	protected onDown(tree: tree.ITree, event: keyboard.StandardKeyboardEvent): boolean {
+	protected onDown(tree: tree.ITree, event: keyboard.IKeyboardEvent): boolean {
 		if (tree.getFocus()) {
 			return super.onDown(tree, event);
 		}

@@ -4,18 +4,12 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {
-	IThemeDecorationRenderOptions,
-	IDecorationRenderOptions,
-	IModelDecorationOptions,
-	IModelDecorationOverviewRulerOptions,
-	OverviewRulerLane
-} from 'vs/editor/common/editorCommon';
-import {AbstractCodeEditorService} from 'vs/editor/common/services/abstractCodeEditorService';
-import dom = require('vs/base/browser/dom');
-import objects = require('vs/base/common/objects');
-import strings = require('vs/base/common/strings');
+import * as objects from 'vs/base/common/objects';
+import * as strings from 'vs/base/common/strings';
 import URI from 'vs/base/common/uri';
+import * as dom from 'vs/base/browser/dom';
+import {IDecorationRenderOptions, IModelDecorationOptions, IModelDecorationOverviewRulerOptions, IThemeDecorationRenderOptions, OverviewRulerLane} from 'vs/editor/common/editorCommon';
+import {AbstractCodeEditorService} from 'vs/editor/common/services/abstractCodeEditorService';
 
 export class CodeEditorServiceImpl extends AbstractCodeEditorService {
 
@@ -113,6 +107,7 @@ class DecorationRenderOptions implements IModelDecorationOptions {
 	public dispose(): void {
 		dom.removeCSSRulesWithPrefix(CSSNameHelper.getDeletionPrefixFor(ThemeType.Light, this._key), this._styleSheet);
 		dom.removeCSSRulesWithPrefix(CSSNameHelper.getDeletionPrefixFor(ThemeType.Dark, this._key), this._styleSheet);
+		dom.removeCSSRulesWithPrefix(CSSNameHelper.getDeletionPrefixFor(ThemeType.HighContrastBlack, this._key), this._styleSheet);
 	}
 
 	private static _CSS_MAP = {
@@ -227,6 +222,7 @@ class DecorationRenderOptions implements IModelDecorationOptions {
 			}
 			if (darkCSS.length > 0) {
 				this._createCSSSelector(styleSheet, ThemeType.Dark, key, ruleType, darkCSS);
+				this._createCSSSelector(styleSheet, ThemeType.HighContrastBlack, key, ruleType, darkCSS);
 			}
 			return CSSNameHelper.getClassName(key, ruleType);
 		}
@@ -240,7 +236,8 @@ class DecorationRenderOptions implements IModelDecorationOptions {
 
 enum ThemeType {
 	Light = 0,
-	Dark = 1
+	Dark = 1,
+	HighContrastBlack = 2
 }
 enum ModelDecorationCSSRuleType {
 	ClassName = 0,
@@ -253,7 +250,10 @@ class CSSNameHelper {
 		if (theme === ThemeType.Light) {
 			return '.monaco-editor.vs';
 		}
-		return '.monaco-editor.vs-dark';
+		if (theme === ThemeType.Dark) {
+			return '.monaco-editor.vs-dark';
+		}
+		return '.monaco-editor.hc-black';
 	}
 
 	public static getClassName(key:string, type:ModelDecorationCSSRuleType): string {

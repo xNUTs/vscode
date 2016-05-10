@@ -4,13 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import nls = require('./utils/nls');
-import Json = require('./json-toolbox/json');
-import {IJSONSchema} from './json-toolbox/jsonSchema';
-import {IXHROptions, IXHRResponse, getErrorStatusDescription} from './utils/httpRequest';
+import Json = require('jsonc-parser');
+import {IJSONSchema, IJSONSchemaMap} from './jsonSchema';
+import {XHROptions, XHRResponse, getErrorStatusDescription} from 'request-light';
 import URI from './utils/uri';
 import Strings = require('./utils/strings');
 import Parser = require('./jsonParser');
+
+import * as nls from 'vscode-nls';
+const localize = nls.loadMessageBundle();
 
 export interface IJSONSchemaService {
 
@@ -206,7 +208,7 @@ export interface IWorkspaceContextService {
 }
 
 export interface IRequestService {
-	(options: IXHROptions): Thenable<IXHRResponse>;
+	(options: XHROptions): Thenable<XHRResponse>;
 }
 
 export class JSONSchemaService implements IJSONSchemaService {
@@ -340,7 +342,7 @@ export class JSONSchemaService implements IJSONSchemaService {
 	}
 
 	public loadSchema(url: string): Thenable<UnresolvedSchema> {
-		if (this.telemetryService && Strings.startsWith(url, 'https://schema.management.azure.com')) {
+		if (this.telemetryService && url.indexOf('//schema.management.azure.com/') !== -1) {
 			this.telemetryService.log('json.schema', {
 				schemaURL: url
 			});
@@ -350,18 +352,18 @@ export class JSONSchemaService implements IJSONSchemaService {
 			request => {
 				let content = request.responseText;
 				if (!content) {
-					let errorMessage = nls.localize('json.schema.nocontent', 'Unable to load schema from \'{0}\': No content.', toDisplayString(url));
+					let errorMessage = localize('json.schema.nocontent', 'Unable to load schema from \'{0}\': No content.', toDisplayString(url));
 					return new UnresolvedSchema(<IJSONSchema>{}, [errorMessage]);
 				}
 
 				let schemaContent: IJSONSchema = {};
 				let jsonErrors = [];
 				schemaContent = Json.parse(content, jsonErrors);
-				let errors = jsonErrors.length ? [nls.localize('json.schema.invalidFormat', 'Unable to parse content from \'{0}\': {1}.', toDisplayString(url), jsonErrors[0])] : [];
+				let errors = jsonErrors.length ? [localize('json.schema.invalidFormat', 'Unable to parse content from \'{0}\': {1}.', toDisplayString(url), jsonErrors[0])] : [];
 				return new UnresolvedSchema(schemaContent, errors);
 			},
-			(error: IXHRResponse) => {
-				let errorMessage = nls.localize('json.schema.unabletoload', 'Unable to load schema from \'{0}\': {1}', toDisplayString(url), error.responseText || getErrorStatusDescription(error.status) || error.toString());
+			(error: XHRResponse) => {
+				let errorMessage = localize('json.schema.unabletoload', 'Unable to load schema from \'{0}\': {1}', toDisplayString(url), error.responseText || getErrorStatusDescription(error.status) || error.toString());
 				return new UnresolvedSchema(<IJSONSchema>{}, [errorMessage]);
 			}
 		);
@@ -393,7 +395,7 @@ export class JSONSchemaService implements IJSONSchemaService {
 					}
 				}
 			} else {
-				resolveErrors.push(nls.localize('json.schema.invalidref', '$ref \'{0}\' in {1} can not be resolved.', linkPath, linkedSchema.id));
+				resolveErrors.push(localize('json.schema.invalidref', '$ref \'{0}\' in {1} can not be resolved.', linkPath, linkedSchema.id));
 			}
 			delete node.$ref;
 		};
@@ -402,43 +404,61 @@ export class JSONSchemaService implements IJSONSchemaService {
 			return this.getOrAddSchemaHandle(uri).getUnresolvedSchema().then(unresolvedSchema => {
 				if (unresolvedSchema.errors.length) {
 					let loc = linkPath ? uri + '#' + linkPath : uri;
-					resolveErrors.push(nls.localize('json.schema.problemloadingref', 'Problems loading reference \'{0}\': {1}', loc, unresolvedSchema.errors[0]));
+					resolveErrors.push(localize('json.schema.problemloadingref', 'Problems loading reference \'{0}\': {1}', loc, unresolvedSchema.errors[0]));
 				}
 				resolveLink(node, unresolvedSchema.schema, linkPath);
 				return resolveRefs(node, unresolvedSchema.schema);
 			});
 		};
 
-		let resolveRefs = (node: any, parentSchema: any): Thenable<any> => {
-			let toWalk = [node];
-			let seen: any[] = [];
+		let resolveRefs = (node: IJSONSchema, parentSchema: IJSONSchema): Thenable<any> => {
+			let toWalk : IJSONSchema[] = [node];
+			let seen: IJSONSchema[] = [];
 
 			let openPromises: Thenable<any>[] = [];
 
+			let collectEntries = (...entries: IJSONSchema[]) => {
+				for (let entry of entries) {
+					if (typeof entry === 'object') {
+						toWalk.push(entry);
+					}
+				}
+			};
+			let collectMapEntries = (...maps: IJSONSchemaMap[]) => {
+				for (let map of maps) {
+					if (typeof map === 'object') {
+						for (let key in map) {
+							let entry = map[key];
+							toWalk.push(entry);
+						}
+					}
+				}
+			};
+			let collectArrayEntries = (...arrays: IJSONSchema[][]) => {
+				for (let array of arrays) {
+					if (Array.isArray(array)) {
+						toWalk.push.apply(toWalk, array);
+					}
+				}
+			};
 			while (toWalk.length) {
 				let next = toWalk.pop();
 				if (seen.indexOf(next) >= 0) {
 					continue;
 				}
 				seen.push(next);
-				if (Array.isArray(next)) {
-					next.forEach(item => {
-						toWalk.push(item);
-					});
-				} else if (next) {
-					if (next.$ref) {
-						let segments = next.$ref.split('#', 2);
-						if (segments[0].length > 0) {
-							openPromises.push(resolveExternalLink(next, segments[0], segments[1]));
-							continue;
-						} else {
-							resolveLink(next, parentSchema, segments[1]);
-						}
-					}
-					for (let key in next) {
-						toWalk.push(next[key]);
+				if (next.$ref) {
+					let segments = next.$ref.split('#', 2);
+					if (segments[0].length > 0) {
+						openPromises.push(resolveExternalLink(next, segments[0], segments[1]));
+						continue;
+					} else {
+						resolveLink(next, parentSchema, segments[1]);
 					}
 				}
+				collectEntries(next.items, next.additionalProperties, next.not);
+				collectMapEntries(next.definitions, next.properties, next.patternProperties, <IJSONSchemaMap> next.dependencies);
+				collectArrayEntries(next.anyOf, next.allOf, next.oneOf, <IJSONSchema[]> next.items);
 			}
 			return Promise.all(openPromises);
 		};

@@ -9,12 +9,10 @@ import Worker = require('vs/base/common/worker/workerClient');
 import abstractThreadService = require('vs/platform/thread/common/abstractThreadService');
 import Env = require('vs/base/common/flags');
 import Platform = require('vs/base/common/platform');
-import errors = require('vs/base/common/errors');
 import Timer = require('vs/base/common/timer');
 import remote = require('vs/base/common/remote');
-import {readThreadSynchronizableObjects} from 'vs/platform/thread/common/threadService';
 import {SyncDescriptor0} from 'vs/platform/instantiation/common/descriptors';
-import {IThreadService, IThreadServiceStatusListener, IThreadSynchronizableObject, ThreadAffinity, IThreadServiceStatus} from 'vs/platform/thread/common/thread';
+import {IThreadService, IThreadSynchronizableObject, ThreadAffinity} from 'vs/platform/thread/common/thread';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 import {DefaultWorkerFactory} from 'vs/base/worker/defaultWorkerFactory';
 
@@ -40,15 +38,16 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 
 	private _workersCreatedPromise: TPromise<void>;
 	private _triggerWorkersCreatedPromise: (value: void) => void;
-	private _listeners: IThreadServiceStatusListener[];
 
 	private _workerFactory: Worker.IWorkerFactory;
 	private _workerModuleId: string;
+	private _defaultWorkerCount: number;
 
-	constructor(contextService: IWorkspaceContextService, workerModuleId: string) {
+	constructor(contextService: IWorkspaceContextService, workerModuleId: string, defaultWorkerCount: number) {
 		super(true);
 		this._contextService = contextService;
 		this._workerModuleId = workerModuleId;
+		this._defaultWorkerCount = defaultWorkerCount;
 		this._workerFactory = new DefaultWorkerFactory();
 
 		if (!this.isInMainThread) {
@@ -57,16 +56,12 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 
 		this._workerPool = [];
 		this._affinityScrambler = {};
-		this._listeners = [];
 
 		this._workersCreatedPromise = new TPromise<void>((c, e, p) => {
 			this._triggerWorkersCreatedPromise = c;
 		}, () => {
 			// Not cancelable
 		});
-
-		// Register all statically instantiated synchronizable objects
-		readThreadSynchronizableObjects().forEach((obj) => this.registerInstance(obj));
 
 		// If nobody asks for workers to be created in 5s, the workers are created automatically
 		TPromise.timeout(MainThreadService.MAXIMUM_WORKER_CREATION_DELAY).then(() => this.ensureWorkers());
@@ -76,7 +71,7 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 		if (this._triggerWorkersCreatedPromise) {
 			// Workers not created yet
 
-			let createCount = Env.workersCount;
+			let createCount = Env.workersCount(this._defaultWorkerCount);
 			if (!Platform.hasWebWorkerSupport()) {
 				// Create at most 1 compatibility worker
 				createCount = Math.min(createCount, 1);
@@ -89,25 +84,6 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 			let complete = this._triggerWorkersCreatedPromise;
 			this._triggerWorkersCreatedPromise = null;
 			complete(null);
-		}
-	}
-
-	addStatusListener(listener: IThreadServiceStatusListener): void {
-		for (let i = 0; i < this._listeners.length; i++) {
-			if (this._listeners[i] === listener) {
-				// listener is already in
-				return;
-			}
-		}
-		this._listeners.push(listener);
-	}
-
-	removeStatusListener(listener: IThreadServiceStatusListener): void {
-		for (let i = 0; i < this._listeners.length; i++) {
-			if (this._listeners[i] === listener) {
-				this._listeners.splice(i, 1);
-				return;
-			}
 		}
 	}
 
@@ -138,7 +114,7 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 		return major.substring(major.length - 14) + '.' + minor.substr(0, 14);
 	}
 
-	private _doCreateWorker(workerId?: number): Worker.WorkerClient {
+	private _doCreateWorker(): Worker.WorkerClient {
 		let worker = new Worker.WorkerClient(
 			this._workerFactory,
 			this._workerModuleId,
@@ -147,64 +123,21 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 					return this._shortName(msg.payload[0], msg.payload[1]);
 				}
 				return msg.type;
-			},
-			(crashed: Worker.WorkerClient) => {
-				let index = 0;
-				for (; index < this._workerPool.length; index++) {
-					if (crashed === this._workerPool[index]) {
-						break;
-					}
-				}
-				let newWorker = this._doCreateWorker(crashed.workerId);
-				if (crashed === this._workerPool[index]) {
-					this._workerPool[index] = newWorker;
-				} else {
-					this._workerPool.push(newWorker);
-				}
-			},
-			workerId
+			}
 		);
 		worker.getRemoteCom().setManyHandler(this);
 		worker.onModuleLoaded = worker.request('initialize', {
-			threadService: this._getRegisteredObjectsData(),
 			contextService: {
 				workspace: this._contextService.getWorkspace(),
 				configuration: this._contextService.getConfiguration(),
 				options: this._contextService.getOptions()
 			}
 		});
-		worker.addMessageHandler('threadService', (msg: any) => {
-			let identifier = msg.identifier;
-			let memberName = msg.memberName;
-			let args = msg.args;
-
-			if (!this._boundObjects.hasOwnProperty(identifier)) {
-				throw new Error('Object ' + identifier + ' was not found on the main thread.');
-			}
-
-			let obj = this._boundObjects[identifier];
-			return TPromise.as(obj[memberName].apply(obj, args));
-		});
 
 		return worker;
 	}
 
-	private _getRegisteredObjectsData(): any {
-		let r: any = {};
-		Object.keys(this._boundObjects).forEach((identifier) => {
-			let obj = this._boundObjects[identifier];
-			if (obj.getSerializableState) {
-				r[identifier] = obj.getSerializableState();
-			}
-		});
-		return r;
-	}
-
-	MainThread(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, params: any[]): TPromise<any> {
-		return target.apply(obj, params);
-	}
-
-	private _getWorkerIndex(obj: IThreadSynchronizableObject<any>, affinity: ThreadAffinity): number {
+	private _getWorkerIndex(obj: IThreadSynchronizableObject, affinity: ThreadAffinity): number {
 		if (affinity === ThreadAffinity.None) {
 			let winners: number[] = [0],
 				winnersQueueSize = this._workerPool[0].getQueueSize();
@@ -233,7 +166,7 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 		return (scramble + affinity) % this._workerPool.length;
 	}
 
-	OneWorker(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, params: any[], affinity: ThreadAffinity): TPromise<any> {
+	OneWorker(obj: IThreadSynchronizableObject, methodName: string, target: Function, params: any[], affinity: ThreadAffinity): TPromise<any> {
 		return this._afterWorkers().then(() => {
 			if (this._workerPool.length === 0) {
 				throw new Error('Cannot fulfill request...');
@@ -245,7 +178,7 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 		});
 	}
 
-	AllWorkers(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, params: any[]): TPromise<any> {
+	AllWorkers(obj: IThreadSynchronizableObject, methodName: string, target: Function, params: any[]): TPromise<any> {
 		return this._afterWorkers().then(() => {
 			return TPromise.join(this._workerPool.map((w) => {
 				return this._remoteCall(w, obj, methodName, params);
@@ -253,16 +186,7 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 		});
 	}
 
-	Everywhere(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, params: any[]): any {
-		this._afterWorkers().then(() => {
-			this._workerPool.forEach((w) => {
-				this._remoteCall(w, obj, methodName, params).done(null, errors.onUnexpectedError);
-			});
-		});
-		return target.apply(obj, params);
-	}
-
-	private _remoteCall(worker: Worker.WorkerClient, obj: IThreadSynchronizableObject<any>, methodName: string, params: any[]): TPromise<any> {
+	private _remoteCall(worker: Worker.WorkerClient, obj: IThreadSynchronizableObject, methodName: string, params: any[]): TPromise<any> {
 		let id = obj.getId();
 		if (!id) {
 			throw new Error('Synchronizable Objects must have an identifier');
@@ -272,41 +196,12 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 		let stopTimer = () => {
 			timerEvent.stop();
 			//			console.log(timerEvent.timeTaken(), this._workerPool.indexOf(worker), obj.getId() + ' >>> ' + methodName + ': ', params);
-			this._pingListenersIfNecessary();
 		};
 
 
 		let r = decoratePromise(worker.request('threadService', [id, methodName, params]), stopTimer, stopTimer);
 
-		this._pingListenersIfNecessary();
-
 		return r;
-	}
-
-	private _pingListenersIfNecessary(): void {
-		if (this._listeners.length > 0) {
-			let status = this._buildStatus();
-			let listeners = this._listeners.slice(0);
-			try {
-				for (let i = 0; i < listeners.length; i++) {
-					listeners[i].onThreadServiceStatus(status);
-				}
-			} catch (e) {
-				errors.onUnexpectedError(e);
-			}
-		}
-	}
-
-	private _buildStatus(): IThreadServiceStatus {
-		let queueSizes = this._workerPool.map((worker) => {
-			return {
-				queueSize: worker.getQueueSize()
-			};
-		});
-
-		return {
-			workers: queueSizes
-		};
 	}
 
 	protected _registerAndInstantiateMainProcessActor<T>(id: string, descriptor: SyncDescriptor0<T>): T {
@@ -317,11 +212,11 @@ export class MainThreadService extends abstractThreadService.AbstractThreadServi
 		this._registerLocalInstance(id, actor);
 	}
 
-	protected _registerAndInstantiatePluginHostActor<T>(id: string, descriptor: SyncDescriptor0<T>): T {
-		throw new Error('Not supported in this runtime context: Cannot communicate to non-existant Plugin Host!');
+	protected _registerAndInstantiateExtHostActor<T>(id: string, descriptor: SyncDescriptor0<T>): T {
+		throw new Error('Not supported in this runtime context: Cannot communicate to non-existant Extension Host!');
 	}
 
-	protected _registerPluginHostActor<T>(id: string, actor: T): void {
+	protected _registerExtHostActor<T>(id: string, actor: T): void {
 		throw new Error('Not supported in this runtime context!');
 	}
 

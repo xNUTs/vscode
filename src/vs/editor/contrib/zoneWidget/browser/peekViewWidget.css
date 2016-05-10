@@ -15,7 +15,6 @@
 
 .monaco-editor .peekview-widget .head .peekview-title {
 	display: inline-block;
-	font-family: "Segoe UI", "SFUIText-Regular", "HelveticaNeue", sans-serif, "Droid Sans Fallback";
 	font-size: 13px;
 	margin-left: 20px;
 	cursor: pointer;
@@ -25,7 +24,7 @@
 	color: #333333;
 }
 
-.monaco-editor .peekview-widget .head .peekview-title .dirname {
+.monaco-editor .peekview-widget .head .peekview-title .dirname:not(:empty) {
 	font-size: 0.9em;
 	color: rgba(108, 108, 108, 0.7);
 	margin-left: 0.5em;
@@ -50,6 +49,7 @@
 .monaco-editor .peekview-widget > .body {
 	border-top: 1px solid #007ACC;
 	border-bottom: 1px solid #007ACC;
+	position: relative;
 }
 
 /* Dark Theme */

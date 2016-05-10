@@ -10,7 +10,11 @@ import model = require('vs/editor/common/model/model');
 import {Emitter} from 'vs/base/common/event';
 import {IModel} from 'vs/editor/common/editorCommon';
 import URI from 'vs/base/common/uri';
-import {create} from 'vs/platform/instantiation/common/instantiationService';
+import {IRequestService} from 'vs/platform/request/common/request';
+import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
+import {IModelService} from 'vs/editor/common/services/modelService';
+import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
+import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
 import {TestContextService} from 'vs/workbench/test/browser/servicesTestUtils';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IFileMatch} from 'vs/platform/search/common/search';
@@ -26,24 +30,24 @@ suite('Search - Model', () => {
 	setup(() => {
 		let emitter = new Emitter<any>();
 
-		oneModel = new model.Model('line1\nline2\nline3', null, URI.parse('file:///folder/file.txt'));
-		instantiation = create({
-			modelService: {
-				getModel: () => oneModel,
-				onModelAdded: emitter.event
-			},
-			requestService: {
-				getRequestUrl: () => 'file:///folder/file.txt'
-			},
-			contextService: new TestContextService()
+		oneModel = new model.Model('line1\nline2\nline3', model.Model.DEFAULT_CREATION_OPTIONS, null, URI.parse('file:///folder/file.txt'));
+		let services = new ServiceCollection();
+		services.set(IWorkspaceContextService, new TestContextService());
+		services.set(IRequestService, <any>{
+			getRequestUrl: () => 'file:///folder/file.txt'
 		});
+		services.set(IModelService, <any>{
+			getModel: () => oneModel,
+			onModelAdded: emitter.event
+		});
+		instantiation = new InstantiationService(services);
 	});
 
 	teardown(() => {
 		oneModel.dispose();
 	});
 
-	test('Line Match', function() {
+	test('Line Match', function () {
 		let fileMatch = new FileMatch(null, toUri('folder\\file.txt'));
 		let lineMatch = new Match(fileMatch, 'foo bar', 1, 0, 3);
 		assert.equal(lineMatch.text(), 'foo bar');
@@ -53,7 +57,7 @@ suite('Search - Model', () => {
 		assert.equal(lineMatch.range().endColumn, 4);
 	});
 
-	test('Line Match - Remove', function() {
+	test('Line Match - Remove', function () {
 
 		let fileMatch = new FileMatch(null, toUri('folder\\file.txt'));
 		let lineMatch = new Match(fileMatch, 'foo bar', 1, 0, 3);
@@ -63,7 +67,7 @@ suite('Search - Model', () => {
 		assert.equal(fileMatch.matches().length, 0);
 	});
 
-	test('File Match', function() {
+	test('File Match', function () {
 
 		let fileMatch = new FileMatch(null, toUri('folder\\file.txt'));
 		assert.equal(fileMatch.matches(), 0);
@@ -76,7 +80,7 @@ suite('Search - Model', () => {
 		assert.equal(fileMatch.name(), 'file.txt');
 	});
 
-	test('Search Result', function() {
+	test('Search Result', function () {
 
 		let searchResult = instantiation.createInstance(SearchResult, null);
 		assert.equal(searchResult.isEmpty(), true);
@@ -98,7 +102,7 @@ suite('Search - Model', () => {
 		assert.equal(searchResult.matches().length, 10);
 	});
 
-	test('Alle Drei Zusammen', function() {
+	test('Alle Drei Zusammen', function () {
 
 		let searchResult = instantiation.createInstance(SearchResult, null);
 		let fileMatch = new FileMatch(searchResult, toUri('far\\boo'));

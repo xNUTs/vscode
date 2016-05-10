@@ -4,18 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import * as mouseEvent from 'vs/base/browser/mouseEvent';
-import * as keyboardEvent from 'vs/base/browser/keyboardEvent';
-import {isChrome, isWebKit} from 'vs/base/browser/browser';
-import types = require('vs/base/common/types');
+import {TimeoutTimer} from 'vs/base/common/async';
+import {onUnexpectedError} from 'vs/base/common/errors';
 import {EventEmitter} from 'vs/base/common/eventEmitter';
 import {Disposable, IDisposable} from 'vs/base/common/lifecycle';
-import {onUnexpectedError} from 'vs/base/common/errors';
-import browserService = require('vs/base/browser/browserService');
-import {TimeoutTimer} from 'vs/base/common/async';
-
-export type IKeyboardEvent = keyboardEvent.IKeyboardEvent;
-export type IMouseEvent = mouseEvent.IMouseEvent;
+import {isObject} from 'vs/base/common/types';
+import {isChrome, isWebKit} from 'vs/base/browser/browser';
+import {IKeyboardEvent, StandardKeyboardEvent} from 'vs/base/browser/keyboardEvent';
+import {IMouseEvent, StandardMouseEvent} from 'vs/base/browser/mouseEvent';
 
 export function clearNode(node: HTMLElement) {
 	while (node.firstChild) {
@@ -37,7 +33,7 @@ export function safeStringifyDOMAware(obj: any): string {
 			return '[Element]';
 		}
 
-		if (types.isObject(value) || Array.isArray(value)) {
+		if (isObject(value) || Array.isArray(value)) {
 			if (seen.indexOf(value) !== -1) {
 				return '[Circular]';
 			} else {
@@ -243,12 +239,12 @@ export interface IAddStandardDisposableListenerSignature {
 }
 function _wrapAsStandardMouseEvent(handler: (e: IMouseEvent) => void): (e: MouseEvent) => void {
 	return function(e: MouseEvent) {
-		return handler(new mouseEvent.StandardMouseEvent(e));
+		return handler(new StandardMouseEvent(e));
 	};
 }
 function _wrapAsStandardKeyboardEvent(handler: (e: IKeyboardEvent) => void): (e: KeyboardEvent) => void {
 	return function(e: KeyboardEvent) {
-		return handler(new keyboardEvent.StandardKeyboardEvent(e));
+		return handler(new StandardKeyboardEvent(e));
 	};
 }
 export let addStandardDisposableListener: IAddStandardDisposableListenerSignature = function addStandardDisposableListener(node: HTMLElement, type: string, handler: (event: any) => void, useCapture?: boolean): IDisposable {
@@ -640,46 +636,34 @@ export function getTotalHeight(element: HTMLElement): number {
 	return element.offsetHeight + margin;
 }
 
-// Adapted from WinJS
 // Gets the left coordinate of the specified element relative to the specified parent.
 export function getRelativeLeft(element: HTMLElement, parent: HTMLElement): number {
 	if (element === null) {
 		return 0;
 	}
 
-	let left = element.offsetLeft;
-	let e = <HTMLElement>element.parentNode;
-	while (e !== null) {
-		left -= e.offsetLeft;
-
-		if (e === parent) {
-			break;
-		}
-		e = <HTMLElement>e.parentNode;
-	}
-
-	return left;
+	let elementPosition = getTopLeftOffset(element);
+	let parentPosition = getTopLeftOffset(parent);
+	return elementPosition.left - parentPosition.left;
 }
 
-// Adapted from WinJS
 // Gets the top coordinate of the element relative to the specified parent.
 export function getRelativeTop(element: HTMLElement, parent: HTMLElement): number {
 	if (element === null) {
 		return 0;
 	}
 
-	let top = element.offsetTop;
-	let e = <HTMLElement>element.parentNode;
-	while (e !== null) {
-		top -= e.offsetTop;
+	let elementPosition = getTopLeftOffset(element);
+	let parentPosition = getTopLeftOffset(parent);
+	return parentPosition.top - elementPosition.top;
+}
 
-		if (e === parent) {
-			break;
-		}
-		e = <HTMLElement>e.parentNode;
-	}
-
-	return top;
+export function getLargestChildWidth(parent: HTMLElement, children: HTMLElement[]): number {
+	let childWidths = children.map((child) => {
+		return getTotalWidth(child) + getRelativeLeft(child, parent) || 0;
+	});
+	let maxWidth = Math.max(...childWidths);
+	return maxWidth;
 }
 
 // ----------------------------------------------------------------------------------------
@@ -779,7 +763,10 @@ export function removeCSSRulesWithPrefix(ruleName: string, style = sharedStyle):
 }
 
 export function isHTMLElement(o: any): o is HTMLElement {
-	return browserService.getService().isHTMLElement(o);
+	if (typeof HTMLElement === 'object') {
+		return o instanceof HTMLElement;
+	}
+	return o && typeof o === 'object' && o.nodeType === 1 && typeof o.nodeName === 'string';
 }
 
 export const EventType = {
@@ -993,4 +980,8 @@ export function removeTabIndexAndUpdateFocus(node: HTMLElement): void {
 	}
 
 	node.removeAttribute('tabindex');
+}
+
+export function getElementsByTagName(tag: string): HTMLElement[] {
+	return Array.prototype.slice.call(document.getElementsByTagName(tag), 0);
 }

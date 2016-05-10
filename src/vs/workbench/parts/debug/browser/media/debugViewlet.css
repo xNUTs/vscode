@@ -19,7 +19,7 @@
 	background: url('repl.svg') center center no-repeat;
 }
 
-.monaco-workbench .debug-action.toggle-repl.notification:before {
+.monaco-workbench .debug-action.notification:before {
 	content: '';
 	width: 6px;
 	height: 6px;
@@ -31,30 +31,26 @@
 	border: 1px solid white;
 }
 
-.monaco-workbench.vs-dark .debug-action.configure {
+.vs-dark .monaco-workbench .debug-action.configure {
 	background: url('configure-inverse.svg') center center no-repeat;
 }
 
-.monaco-workbench.vs-dark .debug-action.toggle-repl {
+.vs-dark .monaco-workbench .debug-action.toggle-repl {
 	background: url('repl-inverse.svg') center center no-repeat;
 }
 
-.monaco-workbench.hc-black .debug-action.configure {
+.hc-black .monaco-workbench .debug-action.configure {
 	background: url('configure-inverse.svg') center center no-repeat;
 }
 
-.monaco-workbench.hc-black .debug-action.toggle-repl:before {
-	content: url('repl-inverse.svg');
+.hc-black .monaco-workbench .debug-action.toggle-repl {
+	background: url('repl-inverse.svg') center center no-repeat;
 }
 
 /* Debug viewlet trees */
 
 .debug-viewlet .monaco-tree .monaco-tree-row > .content {
 	line-height: 22px;
-}
-
-.monaco-workbench .debug-select {
-	max-width: 115px;
 }
 
 .monaco-workbench .monaco-action-bar .action-item.select-container {
@@ -69,7 +65,11 @@
 	margin-left: 0.8em;
 }
 
-.debug-viewlet .monaco-tree .monaco-tree-row.selected .line-number	{ background-color: #ffffff; color: #666; }
+.debug-viewlet .monaco-tree .monaco-tree-row.selected .line-number,
+.debug-viewlet .monaco-tree .monaco-tree-row.selected .thread > .state > .label {
+	background-color: #ffffff;
+	color: #666;
+}
 
 .debug-viewlet .monaco-tree .monaco-tree-row .content .monaco-action-bar {
 	float: right;
@@ -77,13 +77,10 @@
 	margin-right: 12px;
 }
 
-.debug-viewlet .monaco-tree .monaco-tree-row .content .monaco-action-bar .action-item {
-	vertical-align: middle;
-}
-
 .debug-viewlet .monaco-tree .monaco-tree-row .content .monaco-action-bar .action-label {
 	width: 16px;
 	height: 16px;
+	vertical-align: text-bottom;
 }
 
 .debug-viewlet .monaco-tree .monaco-tree-row:hover .content .monaco-action-bar,
@@ -95,7 +92,7 @@
 	opacity: 0.35;
 }
 
-.vs-dark.monaco-workbench .debug-select {
+.vs-dark .monaco-workbench .debug-select {
 	background-color: #3C3C3C;
 	border-color: #3C3C3C;
 	color: rgb(204, 204, 204);
@@ -105,6 +102,7 @@
 
 .debug-viewlet .debug-call-stack-title {
 	display: flex;
+	width: 100%;
 }
 
 .debug-viewlet .debug-call-stack-title > .pause-message {
@@ -137,6 +135,26 @@
 	color: inherit;
 }
 
+.debug-viewlet .debug-call-stack .thread {
+	display: flex;
+}
+
+.debug-viewlet .debug-call-stack .thread > .state {
+	flex: 1;
+	text-align: right;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	padding: 0 10px;
+	text-transform: uppercase;
+}
+
+.debug-viewlet .debug-call-stack .thread > .state > .label {
+	background: rgba(136, 136, 136, 0.3);
+	border-radius: 2px;
+	font-size: 0.8em;
+	padding: 0 3px;
+}
+
 .debug-viewlet .debug-call-stack .stack-frame {
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -146,6 +164,10 @@
 
 .debug-viewlet .debug-call-stack .stack-frame > .file {
 	float: right;
+}
+
+.debug-viewlet .debug-call-stack .stack-frame > .file > .line-number.unavailable {
+	display: none;
 }
 
 .debug-viewlet .debug-call-stack > .monaco-tree-row:not(.selected) .stack-frame > .file {
@@ -158,6 +180,17 @@
 
 .debug-viewlet .debug-call-stack .stack-frame > .file:not(:first-child) {
 	margin-left: 0.8em;
+}
+
+.debug-viewlet .debug-call-stack .load-more {
+	font-style: italic;
+	text-align: center;
+}
+
+.debug-viewlet .debug-call-stack .error {
+	font-style: italic;
+	text-overflow: ellipsis;
+	overflow: hidden;
 }
 
 /* Variables & Expression view */
@@ -247,12 +280,12 @@
 	background: url('remove.svg') center center no-repeat;
 }
 
-.debug-viewlet .debug-action.breakpoints-activate {
-	background: url('breakpoints-activate.svg') center center no-repeat;
+.debug-viewlet .debug-action.remove-all {
+	background: url('remove-all.svg') center center no-repeat;
 }
 
-.debug-viewlet .debug-action.refresh {
-	background: url('refresh.svg') center center no-repeat;
+.debug-viewlet .debug-action.breakpoints-activate {
+	background: url('breakpoints-activate.svg') center center no-repeat;
 }
 
 .debug-viewlet .focused .monaco-tree-row.selected:not(.highlighted) > .content.actions .debug-action.remove {
@@ -263,16 +296,16 @@
 	background: url('remove-inverse.svg') center center no-repeat;
 }
 
+.vs-dark .debug-viewlet .debug-action.remove-all {
+	background: url('remove-all-inverse.svg') center center no-repeat;
+}
+
 .vs-dark .debug-viewlet .focused .monaco-tree-row.selected:not(.highlighted) > .content.actions .debug-action.remove {
 	background: url("remove-focus.svg") center center no-repeat;
 }
 
 .vs-dark .debug-viewlet .debug-action.breakpoints-activate {
 	background: url('breakpoints-activate-inverse.svg') center center no-repeat;
-}
-
-.vs-dark .debug-viewlet .debug-action.refresh {
-	background: url('refresh-inverse.svg') center center no-repeat;
 }
 
 /* No workspace view */
@@ -287,7 +320,7 @@
 
 /* High Contrast Theming */
 
-.hc-black.monaco-workbench .debug-select {
+.hc-black .monaco-workbench .debug-select {
 	background-color: #3C3C3C;
 	border-color: #3C3C3C;
 	color: rgb(204, 204, 204);
@@ -305,6 +338,6 @@
 	background: url('breakpoints-activate-inverse.svg') center center no-repeat;
 }
 
-.hc-black .debug-viewlet .debug-action.refresh {
-	background: url('refresh-inverse.svg') center center no-repeat;
+.hc-black .debug-viewlet .debug-action.remove-all {
+	background: url('remove-all-inverse.svg') center center no-repeat;
 }

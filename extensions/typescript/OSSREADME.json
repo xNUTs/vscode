@@ -192,7 +192,7 @@
 },
 {
 	"name": "typescript",
-	"version": "1.8.0",
+	"version": "1.8.2",
 	"license": "Apache2",
 	"repositoryURL": "https://github.com/Microsoft/TypeScript",
 	"description": "The contents of the folder lib is from the TypeScript project https://github.com/Microsoft/TypeScript.",
@@ -256,4 +256,19 @@
 		"",
 		"END OF TERMS AND CONDITIONS"
 	]
-}]
+},
+{
+	"name": "Microsoft/vscode-extension-telemetry",
+	"version": "0.0.0",
+	"license": "MIT",
+	"isProd": true,
+	"repositoryURL": "https://github.com/Microsoft/vscode-extension-telemetry"
+},
+{
+	"name": "Microsoft/vscode-nls",
+	"version": "0.0.0",
+	"license": "MIT",
+	"isProd": true,
+	"repositoryURL": "https://github.com/Microsoft/vscode-nls"
+}
+]

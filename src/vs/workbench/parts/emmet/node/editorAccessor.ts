@@ -19,7 +19,7 @@ export class EditorAccessor implements emmet.Editor {
 
 	lineStarts: number[] = null;
 
-	emmetSupportedModes = ['html', 'razor', 'css', 'less', 'scss', 'xml', 'xsl', 'jade', 'handlebars', 'hbs', 'jsx', 'tsx', 'erb', 'php', 'twig'];
+	emmetSupportedModes = ['html', 'razor', 'css', 'less', 'scss', 'xml', 'xsl', 'jade', 'handlebars', 'ejs', 'hbs', 'jsx', 'tsx', 'erb', 'php', 'twig'];
 
 	constructor(editor: ICommonCodeEditor) {
 		this.editor = editor;
@@ -100,7 +100,7 @@ export class EditorAccessor implements emmet.Editor {
 
 		let snippet = snippets.CodeSnippet.convertExternalSnippet(value, snippets.ExternalSnippetType.EmmetSnippet);
 		let codeSnippet = new snippets.CodeSnippet(snippet);
-		snippets.get(this.editor).run(codeSnippet, deletePreviousChars, 0);
+		snippets.getSnippetController(this.editor).run(codeSnippet, deletePreviousChars, 0);
 	}
 
 	public getContent(): string {
@@ -115,7 +115,7 @@ export class EditorAccessor implements emmet.Editor {
 		let position = this.editor.getSelection().getStartPosition();
 		let mode = this.editor.getModel().getModeAtPosition(position.lineNumber, position.column);
 		let syntax = mode.getId().split('.').pop();
-		if (/\b(razor|handlebars|erb|php|hbs|twig)\b/.test(syntax)) { // treat like html
+		if (/\b(razor|handlebars|erb|php|hbs|ejs|twig)\b/.test(syntax)) { // treat like html
 			return 'html';
 		}
 		if (/\b(typescriptreact|javascriptreact)\b/.test(syntax)) { // treat like tsx like jsx
@@ -123,6 +123,9 @@ export class EditorAccessor implements emmet.Editor {
 		}
 		if (syntax === 'sass') { // sass is really sccs... map it to scss
 			return'scss';
+		}
+		if (syntax === 'stylus') { // map stylus to css
+			return'css';
 		}
 		return syntax;
 	}

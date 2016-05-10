@@ -4,25 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import 'vs/languages/javascript/common/javascript.contribution';
-
-import EditorCommon = require('vs/editor/common/editorCommon');
 import Modes = require('vs/editor/common/modes');
 import modesUtil = require('vs/editor/test/common/modesUtil');
-
+import {createTokenizationSupport, Language} from 'vs/languages/typescript/common/tokenization';
+import {MockMode} from 'vs/editor/test/common/mocks/mockMode';
+import {createRichEditSupport} from 'vs/languages/typescript/common/mode';
 
 suite('TS/JS - syntax highlighting', () => {
 
-	var tokenizationSupport: Modes.ITokenizationSupport;
-	var assertOnEnter: modesUtil.IOnEnterAsserter;
-
-	setup((done) => {
-		modesUtil.load('javascript').then(mode => {
-			tokenizationSupport = mode.tokenizationSupport;
-			assertOnEnter = modesUtil.createOnEnterAsserter(mode.getId(), mode.richEditSupport);
-			done();
-		});
-	});
+	var tokenizationSupport = createTokenizationSupport(new MockMode('javascript'), Language.EcmaScript5);
+	var assertOnEnter = modesUtil.createOnEnterAsserter('javascript', createRichEditSupport('javascript'));
 
 	test('onEnter', function() {
 		assertOnEnter.nothing('', '', 'var f = function() {');
@@ -68,12 +59,11 @@ suite('TS/JS - syntax highlighting', () => {
 				{ startIndex: 6, type: 'delimiter.js' },
 				{ startIndex: 7, type: '' },
 				{ startIndex: 8, type: 'keyword.js' },
-				{ startIndex: 16, type: 'delimiter.parenthesis.js', bracket: Modes.Bracket.Open },
-				{ startIndex: 17, type: 'delimiter.parenthesis.js', bracket: Modes.Bracket.Close },
+				{ startIndex: 16, type: 'delimiter.parenthesis.js' },
 				{ startIndex: 18, type: '' },
-				{ startIndex: 19, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Open },
+				{ startIndex: 19, type: 'delimiter.bracket.js' },
 				{ startIndex: 20, type: '' },
-				{ startIndex: 21, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Close },
+				{ startIndex: 21, type: 'delimiter.bracket.js' },
 				{ startIndex: 22, type: 'delimiter.js' }
 			]}],
 
@@ -457,58 +447,54 @@ suite('TS/JS - syntax highlighting', () => {
 				{ startIndex: 11, type: 'delimiter.js' }
 			]}],
 
-			// Bracket Matching
 			[{
 			line: '{ key: 123 }',
 			tokens: [
-				{ startIndex: 0, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Open },
+				{ startIndex: 0, type: 'delimiter.bracket.js' },
 				{ startIndex: 1, type: '' },
 				{ startIndex: 2, type: 'identifier.js' },
 				{ startIndex: 5, type: 'delimiter.js' },
 				{ startIndex: 6, type: '' },
 				{ startIndex: 7, type: 'number.js' },
 				{ startIndex: 10, type: '' },
-				{ startIndex: 11, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Close }
+				{ startIndex: 11, type: 'delimiter.bracket.js' }
 			]}],
 
 			[{
 			line: '[1,2,3]',
 			tokens: [
-				{ startIndex: 0, type: 'delimiter.array.js', bracket: Modes.Bracket.Open },
+				{ startIndex: 0, type: 'delimiter.array.js' },
 				{ startIndex: 1, type: 'number.js' },
 				{ startIndex: 2, type: 'delimiter.js' },
 				{ startIndex: 3, type: 'number.js' },
 				{ startIndex: 4, type: 'delimiter.js' },
 				{ startIndex: 5, type: 'number.js' },
-				{ startIndex: 6, type: 'delimiter.array.js', bracket: Modes.Bracket.Close }
+				{ startIndex: 6, type: 'delimiter.array.js' }
 			]}],
 
 			[{
 			line: 'foo(123);',
 			tokens: [
 				{ startIndex: 0, type: 'identifier.js' },
-				{ startIndex: 3, type: 'delimiter.parenthesis.js', bracket: Modes.Bracket.Open },
+				{ startIndex: 3, type: 'delimiter.parenthesis.js' },
 				{ startIndex: 4, type: 'number.js' },
-				{ startIndex: 7, type: 'delimiter.parenthesis.js', bracket: Modes.Bracket.Close },
+				{ startIndex: 7, type: 'delimiter.parenthesis.js' },
 				{ startIndex: 8, type: 'delimiter.js' }
 			]}],
 
 			[{
 			line: '{a:{b:[]}}',
 			tokens: [
-				{ startIndex: 0, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Open },
+				{ startIndex: 0, type: 'delimiter.bracket.js' },
 				{ startIndex: 1, type: 'identifier.js' },
 				{ startIndex: 2, type: 'delimiter.js' },
-				{ startIndex: 3, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Open },
+				{ startIndex: 3, type: 'delimiter.bracket.js' },
 				{ startIndex: 4, type: 'identifier.js' },
 				{ startIndex: 5, type: 'delimiter.js' },
-				{ startIndex: 6, type: 'delimiter.array.js', bracket: Modes.Bracket.Open },
-				{ startIndex: 7, type: 'delimiter.array.js', bracket: Modes.Bracket.Close },
-				{ startIndex: 8, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Close },
-				{ startIndex: 9, type: 'delimiter.bracket.js', bracket: Modes.Bracket.Close }
+				{ startIndex: 6, type: 'delimiter.array.js' },
+				{ startIndex: 8, type: 'delimiter.bracket.js' }
 			]}],
 
-			// No Bracket Matching inside strings
 			[{
 			line: 'x = "[{()}]"',
 			tokens: [

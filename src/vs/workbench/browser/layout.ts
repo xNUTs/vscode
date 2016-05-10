@@ -5,7 +5,6 @@
 'use strict';
 
 import {Dimension, Builder, Box} from 'vs/base/browser/builder';
-import {Preferences} from 'vs/workbench/common/constants';
 import {EditorEvent, EventType} from 'vs/workbench/common/events';
 import {Part} from 'vs/workbench/browser/part';
 import {QuickOpenController} from 'vs/workbench/browser/parts/quickopen/quickOpenController';
@@ -13,19 +12,18 @@ import {Sash, ISashEvent, IVerticalSashLayoutProvider, IHorizontalSashLayoutProv
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IPartService, Position} from 'vs/workbench/services/part/common/partService';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
-import {IStorageService, StorageScope, StorageEventType} from 'vs/platform/storage/common/storage';
+import {IViewletService} from 'vs/workbench/services/viewlet/common/viewletService';
+import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
 import {IContextViewService} from 'vs/platform/contextview/browser/contextView';
 import {IEventService} from 'vs/platform/event/common/event';
+import {IThemeService} from 'vs/workbench/services/themes/common/themeService';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 
 const DEFAULT_MIN_PART_WIDTH = 170;
-const DEFAULT_MIN_PANEL_PART_HEIGHT = 170;
+const DEFAULT_MIN_PANEL_PART_HEIGHT = 77;
 const DEFAULT_MIN_EDITOR_PART_HEIGHT = 170;
 const HIDE_SIDEBAR_WIDTH_THRESHOLD = 50;
 const HIDE_PANEL_HEIGHT_THRESHOLD = 50;
-
-const LAYOUT_RELATED_PREFERENCES = [
-	Preferences.THEME
-];
 
 export class LayoutOptions {
 	public margin: Box;
@@ -50,7 +48,7 @@ interface ComputedStyles {
 }
 
 /**
- * The workbench layout is responsible to lay out all parts that make the Monaco Workbench.
+ * The workbench layout is responsible to lay out all parts that make the Workbench.
  */
 export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontalSashLayoutProvider {
 
@@ -66,7 +64,7 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 	private statusbar: Part;
 	private quickopen: QuickOpenController;
 	private options: LayoutOptions;
-	private toUnbind: { (): void; }[];
+	private toUnbind: IDisposable[];
 	private computedStyles: ComputedStyles;
 	private workbenchSize: Dimension;
 	private sashX: Sash;
@@ -92,11 +90,13 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 		quickopen: QuickOpenController,
 		options: LayoutOptions,
 		@IStorageService private storageService: IStorageService,
-		@IEventService private eventService: IEventService,
+		@IEventService eventService: IEventService,
 		@IContextViewService private contextViewService: IContextViewService,
 		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
 		@IWorkspaceContextService private contextService: IWorkspaceContextService,
-		@IPartService private partService: IPartService
+		@IPartService private partService: IPartService,
+		@IViewletService private viewletService: IViewletService,
+		@IThemeService themeService: IThemeService
 	) {
 		this.parent = parent;
 		this.workbenchContainer = workbenchContainer;
@@ -113,21 +113,19 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 			baseSize: 5
 		});
 		this.sashY = new Sash(this.workbenchContainer.getHTMLElement(), this, {
-			baseSize: 5,
+			baseSize: 4,
 			orientation: Orientation.HORIZONTAL
 		});
 
 		this.sidebarWidth = this.storageService.getInteger(WorkbenchLayout.sashXWidthSettingsKey, StorageScope.GLOBAL, -1);
 		this.panelHeight = this.storageService.getInteger(WorkbenchLayout.sashYHeightSettingsKey, StorageScope.GLOBAL, 0);
 
-		this.registerListeners();
+		this.toUnbind.push(themeService.onDidThemeChange(_ => this.relayout()));
+		this.toUnbind.push(eventService.addListener2(EventType.EDITOR_INPUT_CHANGING, (e: EditorEvent) => this.onEditorInputChanging(e)));
+
 		this.registerSashListeners();
 	}
 
-	private registerListeners(): void {
-		this.toUnbind.push(this.eventService.addListener(StorageEventType.STORAGE, (e: StorageEvent) => this.onPreferenceChange(e)));
-		this.toUnbind.push(this.eventService.addListener(EventType.EDITOR_INPUT_CHANGING, (e: EditorEvent) => this.onEditorInputChanging(e)));
-	}
 
 	private registerSashListeners(): void {
 		let startX: number = 0;
@@ -194,7 +192,7 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 					let dragCompensation = DEFAULT_MIN_PANEL_PART_HEIGHT - HIDE_PANEL_HEIGHT_THRESHOLD;
 					this.partService.setPanelHidden(true);
 					startY = Math.min(this.sidebarHeight - this.computedStyles.statusbar.height, e.currentY + dragCompensation);
-					this.panelHeight = this.startPanelHeight; // when restoring panel, restore to the panel width we started from
+					this.panelHeight = this.startPanelHeight; // when restoring panel, restore to the panel height we started from
 				}
 
 				// Otherwise size the panel accordingly
@@ -221,8 +219,25 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 		this.sashX.addListener('end', () => {
 			this.storageService.store(WorkbenchLayout.sashXWidthSettingsKey, this.sidebarWidth, StorageScope.GLOBAL);
 		});
+
 		this.sashY.addListener('end', () => {
 			this.storageService.store(WorkbenchLayout.sashYHeightSettingsKey, this.panelHeight, StorageScope.GLOBAL);
+		});
+
+		this.sashY.addListener('reset', () => {
+			this.panelHeight = DEFAULT_MIN_PANEL_PART_HEIGHT;
+			this.storageService.store(WorkbenchLayout.sashYHeightSettingsKey, this.panelHeight, StorageScope.GLOBAL);
+			this.partService.setPanelHidden(false);
+			this.layout();
+		});
+
+		this.sashX.addListener('reset', () => {
+			let activeViewlet = this.viewletService.getActiveViewlet();
+			let optimalWidth = activeViewlet && activeViewlet.getOptimalWidth();
+			this.sidebarWidth = Math.max(DEFAULT_MIN_PART_WIDTH, optimalWidth || 0);
+			this.storageService.store(WorkbenchLayout.sashXWidthSettingsKey, this.sidebarWidth, StorageScope.GLOBAL);
+			this.partService.setSideBarHidden(false);
+			this.layout();
 		});
 	}
 
@@ -239,18 +254,16 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 		}
 	}
 
-	private onPreferenceChange(e: StorageEvent): void {
-		if (e.key && LAYOUT_RELATED_PREFERENCES.indexOf(e.key) >= 0) {
+	private relayout(): void {
 
-			// Recompute Styles
-			this.computeStyle();
-			this.editor.getLayout().computeStyle();
-			this.sidebar.getLayout().computeStyle();
-			this.panel.getLayout().computeStyle();
+		// Recompute Styles
+		this.computeStyle();
+		this.editor.getLayout().computeStyle();
+		this.sidebar.getLayout().computeStyle();
+		this.panel.getLayout().computeStyle();
 
-			// Trigger Layout
-			this.layout();
-		}
+		// Trigger Layout
+		this.layout();
 	}
 
 	private computeStyle(): void {
@@ -482,7 +495,8 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 	}
 
 	public getHorizontalSashTop(sash: Sash): number {
-		return this.partService.isPanelHidden() ? this.sidebarHeight : this.sidebarHeight - this.panelHeight;
+		// Horizontal sash should be a bit lower than the editor area, thus add 2px #5524
+		return 2 + (this.partService.isPanelHidden() ? this.sidebarHeight : this.sidebarHeight - this.panelHeight);
 	}
 
 	public getHorizontalSashLeft(sash: Sash): number {
@@ -494,8 +508,9 @@ export class WorkbenchLayout implements IVerticalSashLayoutProvider, IHorizontal
 	}
 
 	public dispose(): void {
-		while (this.toUnbind.length) {
-			this.toUnbind.pop()();
+		if (this.toUnbind) {
+			dispose(this.toUnbind);
+			this.toUnbind = null;
 		}
 	}
 }

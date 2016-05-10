@@ -5,20 +5,40 @@
 'use strict';
 
 import * as nls from 'vs/nls';
-import * as EditorCommon from 'vs/editor/common/editorCommon';
+import {IEditorOptions} from 'vs/editor/common/editorCommon';
+import * as platform from 'vs/base/common/platform';
 
 export interface IConfiguration {
-	editor:EditorCommon.IEditorOptions;
+	editor:IEditorOptions;
 }
+
+export const USUAL_WORD_SEPARATORS = '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?';
+export const DEFAULT_INDENTATION = {
+	tabSize: 4,
+	insertSpaces: true,
+	detectIndentation: true
+};
+export const DEFAULT_TRIM_AUTO_WHITESPACE = true;
+
+const DEFAULT_WINDOWS_FONT_FAMILY = 'Consolas, \'Courier New\', monospace';
+const DEFAULT_MAC_FONT_FAMILY = 'Menlo, Monaco, \'Courier New\', monospace';
+const DEFAULT_LINUX_FONT_FAMILY = '\'Droid Sans Mono\', \'Courier New\', monospace, \'Droid Sans Fallback\'';
+
+/**
+ * Determined from empirical observations.
+ */
+export const GOLDEN_LINE_HEIGHT_RATIO = platform.isMacintosh ? 1.5 : 1.35;
 
 class ConfigClass implements IConfiguration {
 
-	public editor: EditorCommon.IEditorOptions;
+	public editor: IEditorOptions;
 
 	constructor() {
 		this.editor = {
-			experimentalScreenReader: false,
+			experimentalScreenReader: true,
 			rulers: [],
+			wordSeparators: USUAL_WORD_SEPARATORS,
+			selectionClipboard: true,
 			ariaLabel: nls.localize('editorViewAccessibleLabel', "Editor content"),
 			lineNumbers: true,
 			selectOnLineNumbers: true,
@@ -45,14 +65,10 @@ class ConfigClass implements IConfiguration {
 			automaticLayout: false,
 			wrappingColumn: 300,
 			wrappingIndent: 'same',
-			wordWrapBreakBeforeCharacters: '{([+',
-			wordWrapBreakAfterCharacters: ' \t})]?|&,;',
+			wordWrapBreakBeforeCharacters: '([{‘“〈《「『【〔（［｛｢£¥＄￡￥+＋',
+			wordWrapBreakAfterCharacters: ' \t})]?|&,;¢°′″‰℃、。｡､￠，．：；？！％・･ゝゞヽヾーァィゥェォッャュョヮヵヶぁぃぅぇぉっゃゅょゎゕゖㇰㇱㇲㇳㇴㇵㇶㇷㇸㇹㇺㇻㇼㇽㇾㇿ々〻ｧｨｩｪｫｬｭｮｯｰ’”〉》」』】〕）］｝｣',
 			wordWrapBreakObtrusiveCharacters: '.',
 			tabFocusMode: false,
-			// stopLineTokenizationAfter
-			// stopRenderingLineAfter
-			longLineBoundary: 300,
-			forcedTokenizationBoundary: 1000,
 
 			// Features
 			hover: true,
@@ -64,16 +80,21 @@ class ConfigClass implements IConfiguration {
 			autoClosingBrackets: true,
 			formatOnType: false,
 			suggestOnTriggerCharacters: true,
+			acceptSuggestionOnEnter: true,
 			selectionHighlight: true,
 			outlineMarkers: false,
 			referenceInfos: true,
 			folding: true,
 			renderWhitespace: false,
+			indentGuides: false,
+			useTabStops: true,
 
-			tabSize: 4,
-			insertSpaces: true,
-			fontFamily: '',
-			fontSize: 0,
+			fontFamily: (
+				platform.isMacintosh ? DEFAULT_MAC_FONT_FAMILY : (platform.isLinux ? DEFAULT_LINUX_FONT_FAMILY : DEFAULT_WINDOWS_FONT_FAMILY)
+			),
+			fontSize: (
+				platform.isMacintosh ? 12 : 14
+			),
 			lineHeight: 0
 		};
 	}

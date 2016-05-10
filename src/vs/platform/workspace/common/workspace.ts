@@ -85,8 +85,6 @@ export interface IConfiguration {
 }
 
 export interface IEnvironment {
-	language: string;
-
 	appName: string;
 	appRoot: string;
 	isBuilt: boolean;
@@ -107,7 +105,10 @@ export interface IEnvironment {
 		itemUrl: string;
 	};
 
+	extensionTips: { [id: string]: string; };
+
 	releaseNotesUrl: string;
+	licenseUrl: string;
 	productDownloadUrl: string;
 
 	welcomePage: string;
@@ -118,20 +119,22 @@ export interface IEnvironment {
 	appSettingsPath: string;
 	appKeybindingsPath: string;
 
-	debugPluginHostPort: number;
-	debugBrkPluginHost: boolean;
-	disablePlugins: boolean;
+	debugExtensionHostPort: number;
+	debugBrkExtensionHost: boolean;
+	disableExtensions: boolean;
 
-	logPluginHostCommunication: boolean;
+	logExtensionHostCommunication: boolean;
+	debugBrkFileWatcherPort: number;
 	verboseLogging: boolean;
 	enablePerformance: boolean;
 
-	userPluginsHome: string;
+	userExtensionsHome: string;
 	sharedIPCHandle: string;
-	pluginDevelopmentPath: string;
-	pluginTestsPath: string;
+	extensionDevelopmentPath: string;
+	extensionTestsPath: string;
 
-	recentPaths: string[];
+	recentFiles: string[];
+	recentFolders: string[];
 
 	enableTelemetry: boolean;
 

@@ -6,15 +6,16 @@
 'use strict';
 
 import 'vs/css!./overlayWidgets';
-
-import {ViewPart} from 'vs/editor/browser/view/viewPart';
-import EditorBrowser = require('vs/editor/browser/editorBrowser');
-import EditorCommon = require('vs/editor/common/editorCommon');
 import {StyleMutator} from 'vs/base/browser/styleMutator';
+import {EditorLayoutInfo} from 'vs/editor/common/editorCommon';
+import {ClassNames, IOverlayWidget, OverlayWidgetPositionPreference} from 'vs/editor/browser/editorBrowser';
+import {ViewPart} from 'vs/editor/browser/view/viewPart';
+import {ViewContext} from 'vs/editor/common/view/viewContext';
+import {IRenderingContext, IRestrictedRenderingContext} from 'vs/editor/common/view/renderingContext';
 
 interface IWidgetData {
-	widget: EditorBrowser.IOverlayWidget;
-	preference: EditorBrowser.OverlayWidgetPositionPreference;
+	widget: IOverlayWidget;
+	preference: OverlayWidgetPositionPreference;
 }
 
 interface IWidgetMap {
@@ -29,17 +30,19 @@ export class ViewOverlayWidgets extends ViewPart {
 	private _verticalScrollbarWidth: number;
 	private _horizontalScrollbarHeight:number;
 	private _editorHeight:number;
+	private _editorWidth:number;
 
-	constructor(context:EditorBrowser.IViewContext) {
+	constructor(context:ViewContext) {
 		super(context);
 
 		this._widgets = {};
 		this._verticalScrollbarWidth = 0;
 		this._horizontalScrollbarHeight = 0;
 		this._editorHeight = 0;
+		this._editorWidth = 0;
 
 		this.domNode = document.createElement('div');
-		this.domNode.className = EditorBrowser.ClassNames.OVERLAY_WIDGETS;
+		this.domNode.className = ClassNames.OVERLAY_WIDGETS;
 	}
 
 	public dispose(): void {
@@ -49,20 +52,17 @@ export class ViewOverlayWidgets extends ViewPart {
 
 	// ---- begin view event handlers
 
-	public onLayoutChanged(layoutInfo:EditorCommon.IEditorLayoutInfo): boolean {
+	public onLayoutChanged(layoutInfo:EditorLayoutInfo): boolean {
 		this._verticalScrollbarWidth = layoutInfo.verticalScrollbarWidth;
 		this._horizontalScrollbarHeight = layoutInfo.horizontalScrollbarHeight;
 		this._editorHeight = layoutInfo.height;
-
-		this._requestModificationFrame(() => {
-			StyleMutator.setWidth(this.domNode, layoutInfo.width);
-		});
+		this._editorWidth = layoutInfo.width;
 		return true;
 	}
 
 	// ---- end view event handlers
 
-	public addWidget(widget: EditorBrowser.IOverlayWidget): void {
+	public addWidget(widget: IOverlayWidget): void {
 		this._widgets[widget.getId()] = {
 			widget: widget,
 			preference: null
@@ -73,20 +73,23 @@ export class ViewOverlayWidgets extends ViewPart {
 		domNode.style.position = 'absolute';
 		domNode.setAttribute('widgetId', widget.getId());
 		this.domNode.appendChild(domNode);
+
+		this.setShouldRender();
 	}
 
-	public setWidgetPosition(widget: EditorBrowser.IOverlayWidget, preference:EditorBrowser.OverlayWidgetPositionPreference): void {
+	public setWidgetPosition(widget: IOverlayWidget, preference:OverlayWidgetPositionPreference): boolean {
 		var widgetData = this._widgets[widget.getId()];
-		widgetData.preference = preference;
+		if (widgetData.preference === preference) {
+			return false;
+		}
 
-		this._requestModificationFrame(() => {
-			if(this._widgets.hasOwnProperty(widget.getId())) {
-				this._renderWidget(widgetData);
-			}
-		});
+		widgetData.preference = preference;
+		this.setShouldRender();
+
+		return true;
 	}
 
-	public removeWidget(widget: EditorBrowser.IOverlayWidget): void {
+	public removeWidget(widget: IOverlayWidget): void {
 		var widgetId = widget.getId();
 		if (this._widgets.hasOwnProperty(widgetId)) {
 			var widgetData = this._widgets[widgetId];
@@ -94,6 +97,7 @@ export class ViewOverlayWidgets extends ViewPart {
 			delete this._widgets[widgetId];
 
 			domNode.parentNode.removeChild(domNode);
+			this.setShouldRender();
 		}
 	}
 
@@ -110,20 +114,20 @@ export class ViewOverlayWidgets extends ViewPart {
 			return;
 		}
 
-		if (widgetData.preference === EditorBrowser.OverlayWidgetPositionPreference.TOP_RIGHT_CORNER) {
+		if (widgetData.preference === OverlayWidgetPositionPreference.TOP_RIGHT_CORNER) {
 			if (!domNode.hasAttribute(_RESTORE_STYLE_TOP)) {
 				domNode.setAttribute(_RESTORE_STYLE_TOP, domNode.style.top);
 			}
 			StyleMutator.setTop(domNode, 0);
 			StyleMutator.setRight(domNode, (2 * this._verticalScrollbarWidth));
-		} else if (widgetData.preference === EditorBrowser.OverlayWidgetPositionPreference.BOTTOM_RIGHT_CORNER) {
+		} else if (widgetData.preference === OverlayWidgetPositionPreference.BOTTOM_RIGHT_CORNER) {
 			if (!domNode.hasAttribute(_RESTORE_STYLE_TOP)) {
 				domNode.setAttribute(_RESTORE_STYLE_TOP, domNode.style.top);
 			}
 			var widgetHeight = domNode.clientHeight;
 			StyleMutator.setTop(domNode, (this._editorHeight - widgetHeight - 2 * this._horizontalScrollbarHeight));
 			StyleMutator.setRight(domNode, (2 * this._verticalScrollbarWidth));
-		} else if (widgetData.preference === EditorBrowser.OverlayWidgetPositionPreference.TOP_CENTER) {
+		} else if (widgetData.preference === OverlayWidgetPositionPreference.TOP_CENTER) {
 			if (!domNode.hasAttribute(_RESTORE_STYLE_TOP)) {
 				domNode.setAttribute(_RESTORE_STYLE_TOP, domNode.style.top);
 			}
@@ -132,26 +136,20 @@ export class ViewOverlayWidgets extends ViewPart {
 		}
 	}
 
-	_render(ctx:EditorBrowser.IRenderingContext): void {
-		var widgetId:string;
-
-		this._requestModificationFrame(() => {
-			for (widgetId in this._widgets) {
-				if (this._widgets.hasOwnProperty(widgetId)) {
-					this._renderWidget(this._widgets[widgetId]);
-				}
-			}
-		});
+	public prepareRender(ctx:IRenderingContext): void {
+		// Nothing to read
+		if (!this.shouldRender()) {
+			throw new Error('I did not ask to render!');
+		}
 	}
 
-	public onReadAfterForcedLayout(ctx:EditorBrowser.IRenderingContext): void {
-		// Overwriting to bypass `shouldRender` flag
-		this._render(ctx);
-		return null;
-	}
+	public render(ctx:IRestrictedRenderingContext): void {
+		StyleMutator.setWidth(this.domNode, this._editorWidth);
 
-	public onWriteAfterForcedLayout(): void {
-		// Overwriting to bypass `shouldRender` flag
-		this._executeModificationRunners();
+		let keys = Object.keys(this._widgets);
+		for (let i = 0, len = keys.length; i < len; i++) {
+			let widgetId = keys[i];
+			this._renderWidget(this._widgets[widgetId]);
+		}
 	}
 }

@@ -14,8 +14,11 @@ import dom = require('vs/base/browser/dom');
 import platform = require('vs/base/common/platform');
 import tree = require('vs/base/parts/tree/browser/tree');
 import treeimpl = require('vs/base/parts/tree/browser/treeImpl');
+import { IEventService } from 'vs/platform/event/common/event';
+import { EventType, CompositeEvent } from 'vs/workbench/common/events';
 import viewer = require('vs/workbench/parts/debug/browser/replViewer');
 import debug = require('vs/workbench/parts/debug/common/debug');
+import { Expression } from 'vs/workbench/parts/debug/common/debugModel';
 import debugactions = require('vs/workbench/parts/debug/electron-browser/debugActions');
 import replhistory = require('vs/workbench/parts/debug/common/replHistory');
 import { Panel } from 'vs/workbench/browser/panel';
@@ -25,6 +28,7 @@ import { IInstantiationService } from 'vs/platform/instantiation/common/instanti
 import { IWorkspaceContextService } from 'vs/workbench/services/workspace/common/contextService';
 import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
 import { CommonKeybindings } from 'vs/base/common/keyCodes';
+import {IKeyboardEvent} from 'vs/base/browser/keyboardEvent';
 
 const $ = dom.emmet;
 
@@ -60,7 +64,8 @@ export class Repl extends Panel {
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IInstantiationService private instantiationService: IInstantiationService,
 		@IContextViewService private contextViewService: IContextViewService,
-		@IStorageService private storageService: IStorageService
+		@IStorageService private storageService: IStorageService,
+		@IEventService private eventService: IEventService
 	) {
 		super(debug.REPL_ID, telemetryService);
 
@@ -69,24 +74,39 @@ export class Repl extends Panel {
 	}
 
 	private registerListeners(): void {
-		this.toDispose.push(this.debugService.getModel().addListener2(debug.ModelEvents.REPL_ELEMENTS_UPDATED, (re: debug.ITreeElement|debug.ITreeElement[]) => {
-			this.onReplElementsUpdated(re);
+		this.toDispose.push(this.debugService.getModel().onDidChangeReplElements(() => {
+			this.onReplElementsUpdated();
+		}));
+		this.toDispose.push(this.eventService.addListener2(EventType.COMPOSITE_OPENED, (e: CompositeEvent) => {
+			if (e.compositeId === debug.REPL_ID) {
+				const elements = this.debugService.getModel().getReplElements();
+				if (elements.length > 0) {
+					return this.reveal(elements[elements.length - 1]);
+				}
+			}
 		}));
 	}
 
-	private onReplElementsUpdated(re: debug.ITreeElement | debug.ITreeElement[]): void {
+	private onReplElementsUpdated(): void {
 		if (this.tree) {
 			if (this.refreshTimeoutHandle) {
 				return; // refresh already triggered
 			}
 
 			this.refreshTimeoutHandle = setTimeout(() => {
-				delete this.refreshTimeoutHandle;
+				this.refreshTimeoutHandle = null;
 
 				const scrollPosition = this.tree.getScrollPosition();
 				this.tree.refresh().then(() => {
 					if (scrollPosition === 0 || scrollPosition === 1) {
-						return this.tree.setScrollPosition(1); // keep scrolling to the end unless user scrolled up
+						this.tree.setScrollPosition(1); // keep scrolling to the end unless user scrolled up
+					}
+
+					// If the last repl element has children - auto expand it #6019
+					const elements = this.debugService.getModel().getReplElements();
+					const lastElement = elements.length > 0 ? elements[elements.length - 1] : null;
+					if (lastElement instanceof Expression && lastElement.reference > 0) {
+						return this.tree.expand(elements[elements.length - 1]);
 					}
 				}, errors.onUnexpectedError);
 			}, Repl.REFRESH_DELAY);
@@ -101,12 +121,10 @@ export class Repl extends Panel {
 		this.replInput = <HTMLInputElement>dom.append(replInputContainer, $('input.repl-input'));
 		this.replInput.type = 'text';
 
-		this.toDispose.push(dom.addStandardDisposableListener(this.replInput, 'keydown', (e: dom.IKeyboardEvent) => {
-			let trimmedValue = this.replInput.value.trim();
-
-			if (e.equals(CommonKeybindings.ENTER) && trimmedValue) {
-				this.debugService.addReplExpression(trimmedValue);
-				Repl.HISTORY.evaluated(trimmedValue);
+		this.toDispose.push(dom.addStandardDisposableListener(this.replInput, 'keydown', (e: IKeyboardEvent) => {
+			if (e.equals(CommonKeybindings.ENTER)) {
+				this.debugService.addReplExpression(this.replInput.value);
+				Repl.HISTORY.evaluated(this.replInput.value);
 				this.replInput.value = '';
 				e.preventDefault();
 			} else if (e.equals(CommonKeybindings.UP_ARROW) || e.equals(CommonKeybindings.DOWN_ARROW)) {
@@ -181,7 +199,7 @@ export class Repl extends Panel {
 
 	public dispose(): void {
 		// destroy container
-		this.toDispose = lifecycle.disposeAll(this.toDispose);
+		this.toDispose = lifecycle.dispose(this.toDispose);
 
 		super.dispose();
 	}

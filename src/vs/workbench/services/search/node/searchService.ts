@@ -10,13 +10,14 @@ import glob = require('vs/base/common/glob');
 import objects = require('vs/base/common/objects');
 import scorer = require('vs/base/common/scorer');
 import strings = require('vs/base/common/strings');
-import {Client} from 'vs/base/node/service.cp';
+import {Client} from 'vs/base/parts/ipc/node/ipc.cp';
 import {IProgress, LineMatch, FileMatch, ISearchComplete, ISearchProgressItem, QueryType, IFileMatch, ISearchQuery, ISearchConfiguration, ISearchService} from 'vs/platform/search/common/search';
 import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
 import {IModelService} from 'vs/editor/common/services/modelService';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
-import {IRawSearch, ISerializedSearchComplete, ISerializedSearchProgressItem, IRawSearchService, SearchService as RawSearchService} from 'vs/workbench/services/search/node/rawSearchService';
+import {IRawSearch, ISerializedSearchComplete, ISerializedSearchProgressItem, IRawSearchService} from './search';
+import {ISearchChannel, SearchChannelClient} from './searchIpc';
 
 export class SearchService implements ISearchService {
 	public serviceId = ISearchService;
@@ -34,71 +35,70 @@ export class SearchService implements ISearchService {
 	}
 
 	public search(query: ISearchQuery): PPromise<ISearchComplete, ISearchProgressItem> {
-		return this.configurationService.loadConfiguration().then((configuration: ISearchConfiguration) => {
+		const configuration = this.configurationService.getConfiguration<ISearchConfiguration>();
 
-			// Configuration: Encoding
-			if (!query.fileEncoding) {
-				let fileEncoding = configuration && configuration.files && configuration.files.encoding;
-				query.fileEncoding = fileEncoding;
+		// Configuration: Encoding
+		if (!query.fileEncoding) {
+			let fileEncoding = configuration && configuration.files && configuration.files.encoding;
+			query.fileEncoding = fileEncoding;
+		}
+
+		// Configuration: File Excludes
+		let fileExcludes = configuration && configuration.files && configuration.files.exclude;
+		if (fileExcludes) {
+			if (!query.excludePattern) {
+				query.excludePattern = fileExcludes;
+			} else {
+				objects.mixin(query.excludePattern, fileExcludes, false /* no overwrite */);
 			}
+		}
 
-			// Configuration: File Excludes
-			let fileExcludes = configuration && configuration.files && configuration.files.exclude;
-			if (fileExcludes) {
-				if (!query.excludePattern) {
-					query.excludePattern = fileExcludes;
-				} else {
-					objects.mixin(query.excludePattern, fileExcludes, false /* no overwrite */);
+		let rawSearchQuery: PPromise<void, ISearchProgressItem>;
+		return new PPromise<ISearchComplete, ISearchProgressItem>((onComplete, onError, onProgress) => {
+
+			// Get local results from dirty/untitled
+			let localResultsFlushed = false;
+			let localResults = this.getLocalResults(query);
+
+			let flushLocalResultsOnce = function () {
+				if (!localResultsFlushed) {
+					localResultsFlushed = true;
+					Object.keys(localResults).map((key) => localResults[key]).filter((res) => !!res).forEach(onProgress);
 				}
-			}
+			};
 
-			let rawSearchQuery: PPromise<void, ISearchProgressItem>;
-			return new PPromise<ISearchComplete, ISearchProgressItem>((onComplete, onError, onProgress) => {
+			// Delegate to parent for real file results
+			rawSearchQuery = this.diskSearch.search(query).then(
 
-				// Get local results from dirty/untitled
-				let localResultsFlushed = false;
-				let localResults = this.getLocalResults(query);
+				// on Complete
+				(complete) => {
+					flushLocalResultsOnce();
+					onComplete({ results: complete.results.filter((match) => typeof localResults[match.resource.toString()] === 'undefined'), limitHit: complete.limitHit }); // dont override local results
+				},
 
-				let flushLocalResultsOnce = function() {
-					if (!localResultsFlushed) {
-						localResultsFlushed = true;
-						Object.keys(localResults).map((key) => localResults[key]).filter((res) => !!res).forEach(onProgress);
+				// on Error
+				(error) => {
+					flushLocalResultsOnce();
+					onError(error);
+				},
+
+				// on Progress
+				(progress) => {
+					flushLocalResultsOnce();
+
+					// Match
+					if (progress.resource) {
+						if (typeof localResults[progress.resource.toString()] === 'undefined') { // don't override local results
+							onProgress(progress);
+						}
 					}
-				};
 
-				// Delegate to parent for real file results
-				rawSearchQuery = this.diskSearch.search(query).then(
-
-					// on Complete
-					(complete) => {
-						flushLocalResultsOnce();
-						onComplete({ results: complete.results.filter((match) => typeof localResults[match.resource.toString()] === 'undefined'), limitHit: complete.limitHit }); // dont override local results
-					},
-
-					// on Error
-					(error) => {
-						flushLocalResultsOnce();
-						onError(error);
-					},
-
-					// on Progress
-					(progress) => {
-						flushLocalResultsOnce();
-
-						// Match
-						if (progress.resource) {
-							if (typeof localResults[progress.resource.toString()] === 'undefined') { // don't override local results
-								onProgress(progress);
-							}
-						}
-
-						// Progress
-						else {
-							onProgress(<IProgress>progress);
-						}
-					});
-			}, () => rawSearchQuery && rawSearchQuery.cancel());
-		});
+					// Progress
+					else {
+						onProgress(<IProgress>progress);
+					}
+				});
+		}, () => rawSearchQuery && rawSearchQuery.cancel());
 	}
 
 	private getLocalResults(query: ISearchQuery): { [resourcePath: string]: IFileMatch; } {
@@ -205,7 +205,8 @@ class DiskSearch {
 			}
 		);
 
-		this.raw = client.getService<IRawSearchService>('SearchService', RawSearchService);
+		const channel = client.getChannel<ISearchChannel>('search');
+		this.raw = new SearchChannelClient(channel);
 	}
 
 	public search(query: ISearchQuery): PPromise<ISearchComplete, ISearchProgressItem> {

@@ -13,11 +13,11 @@
 	background: url('OpenEditor.svg') center center no-repeat;
 }
 
-.monaco-workbench.vs-dark .git-action.open-in-diff {
+.vs-dark .monaco-workbench .git-action.open-in-diff {
 	background: url('Compare_inverse.svg') center center no-repeat;
 }
 
-.monaco-workbench.vs-dark .git-action.open-in-editor {
+.vs-dark .monaco-workbench .git-action.open-in-editor {
 	background: url('OpenEditor_inverse.svg') center center no-repeat;
 }
 
@@ -69,7 +69,6 @@
 	position: absolute;
 	bottom: -4px;
 	margin-left: 5px;
-	-moz-box-sizing: border-box;
 	box-sizing: border-box;
 	border-left: 4px solid rgba(185, 19, 26, 0.76);
 	border-top: 4px solid transparent;
@@ -95,58 +94,17 @@
 	padding: 0.8em 1em;
 }
 
-.monaco-shell .git-credentials > .monaco-credentials {
-	width: 300px;
-	overflow: hidden;
-	padding: 1em;
-	border-top: none;
-	font-family: "Segoe WPC", "Segoe UI", "SFUIText-Light", "HelveticaNeue-Light", sans-serif, "Droid Sans Fallback";
-	outline: 0;
-	box-shadow: 0 2px 8px #A8A8A8;
-	border: none;
-	color: #646465;
-	background-color: white;
-	-webkit-animation: fadeIn 0.083s linear;
-	-o-animation: fadeIn 0.083s linear;
-	-moz-animation: fadeIn 0.083s linear;
-	-ms-animation: fadeIn 0.083s linear;
-	animation: fadeIn 0.083s linear;
-}
-
-.monaco-shell .git-credentials .credentials {
-	margin: 10px 0 0 0;
-}
-
-.monaco-shell .git-credentials .credentials > .field {
-	margin: 4px 0 0;
-}
-
-.monaco-shell .git-credentials .credentials > .field .label {
-	display: inline-block;
-	width: 110px;
-}
-
-.monaco-shell.vs-dark .git-credentials > .monaco-credentials {
-	box-shadow: 0 2px 8px #000;
-	color: #BBB;
-	background-color: #2D2F31;
-}
-
-.monaco-shell.vs-dark .git-credentials > .monaco-credentials input {
-	background-color: #3C3C3C;
-}
-
 /* Quick Open */
 
 .monaco-workbench .quick-open-widget .quick-open-tree .quick-open-entry .quick-open-entry-icon.git {
 	background-size: 100%;
 }
 
-.monaco-workbench.vs .quick-open-widget .quick-open-tree .quick-open-entry .quick-open-entry-icon.git {
+.vs .monaco-workbench .quick-open-widget .quick-open-tree .quick-open-entry .quick-open-entry-icon.git {
 	background-image: url('git.svg');
 }
 
-.monaco-workbench.vs-dark .quick-open-widget .quick-open-tree .quick-open-entry .quick-open-entry-icon.git {
+.vs-dark .monaco-workbench .quick-open-widget .quick-open-tree .quick-open-entry .quick-open-entry-icon.git {
 	background-image: url('git-dark.svg');
 }
 
@@ -158,29 +116,21 @@
 
 .monaco-shell .git-action.live-sync.icon.loading {
 	animation:			spin-forever 1.6s linear infinite;
-	-ms-animation:		spin-forever 1.6s linear infinite;
-	-webkit-animation:	spin-forever 1.6s linear infinite;
-	-moz-animation:		spin-forever 1.6s linear infinite;
-	-o-animation:		spin-forever 1.6s linear infinite;
 }
 
 @keyframes			spin-forever { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-@-ms-keyframes		spin-forever { from { -ms-transform: rotate(0deg); } to { -ms-transform: rotate(360deg); } }
-@-o-keyframes		spin-forever { from { -o-transform: rotate(0deg); } to { -o-transform: rotate(360deg); } }
-@-webkit-keyframes	spin-forever { from { -webkit-transform: rotate(0deg); } to { -webkit-transform: rotate(360deg); } }
-@-moz-keyframes		spin-forever { from { -moz-transform: rotate(0deg); } to { -moz-transform: rotate(360deg); } }
 
 /* High Contrast Theming */
-.monaco-workbench.hc-black > .activitybar .monaco-action-bar .action-label.git:before {
+.hc-black .monaco-workbench > .activitybar .monaco-action-bar .action-label.git:before {
 	content: url('git-dark.svg');
 }
 
-.monaco-workbench.hc-black > .activitybar .monaco-action-bar .badge.git-viewlet-label-progress .badge-content {
+.hc-black .monaco-workbench > .activitybar .monaco-action-bar .badge.git-viewlet-label-progress .badge-content {
 	background: none;
 	width: 1px;
 }
 
-.monaco-workbench.hc-black > .activitybar .monaco-action-bar .badge.git-viewlet-label-progress .badge-content:before {
+.hc-black .monaco-workbench > .activitybar .monaco-action-bar .badge.git-viewlet-label-progress .badge-content:before {
 	content: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgdmlld0JveD0iMiAyIDE0IDE0IiBlbmFibGUtYmFja2dyb3VuZD0ibmV3IDIgMiAxNCAxNCI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTkgMTZjLTMuODYgMC03LTMuMTQtNy03czMuMTQtNyA3LTdjMy44NTkgMCA3IDMuMTQxIDcgN3MtMy4xNDEgNy03IDd6bTAtMTIuNmMtMy4wODggMC01LjYgMi41MTMtNS42IDUuNnMyLjUxMiA1LjYgNS42IDUuNiA1LjYtMi41MTIgNS42LTUuNi0yLjUxMi01LjYtNS42LTUuNnptMy44NiA3LjFsLTMuMTYtMS44OTZ2LTMuODA0aC0xLjR2NC41OTZsMy44NCAyLjMwNS43Mi0xLjIwMXoiLz48L3N2Zz4=");
 	position: relative;
 	top: 2px;
@@ -190,14 +140,14 @@
 	width: 16px;
 }
 
-.monaco-workbench.hc-black .git-action {
+.hc-black .monaco-workbench .git-action {
 	background: none;
 }
 
-.monaco-workbench.hc-black .action-item.disabled .git-action:before {
+.hc-black .monaco-workbench .action-item.disabled .git-action:before {
 }
 
-.monaco-workbench.hc-black .git-action.open-in-diff:before {
+.hc-black .monaco-workbench .git-action.open-in-diff:before {
 	content: url('Compare_inverse.svg');
 	position: absolute;
 	top: 12px;
@@ -206,7 +156,7 @@
 	width: 16px;
 }
 
-.monaco-workbench.hc-black .git-action.open-in-editor:before {
+.hc-black .monaco-workbench .git-action.open-in-editor:before {
 	content: url('OpenEditor_inverse.svg');
 	position: absolute;
 	top: 12px;

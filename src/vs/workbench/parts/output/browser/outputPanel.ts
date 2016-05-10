@@ -24,6 +24,7 @@ import {OutputEditorInput} from 'vs/workbench/parts/output/common/outputEditorIn
 import {SwitchOutputAction, SwitchOutputActionItem, ClearOutputAction} from 'vs/workbench/parts/output/browser/outputActions';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
+import {IThemeService} from 'vs/workbench/services/themes/common/themeService';
 
 export class OutputPanel extends StringEditor {
 
@@ -40,10 +41,11 @@ export class OutputPanel extends StringEditor {
 		@IEventService eventService: IEventService,
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
 		@IModeService modeService: IModeService,
+		@IThemeService themeService: IThemeService,
 		@IOutputService private outputService: IOutputService
 	) {
 		super(telemetryService, instantiationService, contextService, storageService,
-			messageService, configurationService, eventService, editorService, modeService);
+			messageService, configurationService, eventService, editorService, modeService, themeService);
 		this.toDispose = [];
 	}
 
@@ -80,9 +82,11 @@ export class OutputPanel extends StringEditor {
 		options.lineNumbers = false;			// all output editors hide line numbers
 		options.glyphMargin = false;
 		options.lineDecorationsWidth = 20;
+		options.rulers = [];
+		options.folding = false;
 
-		let channel = this.outputService.getActiveChannel();
-		options.ariaLabel = channel ? nls.localize('outputPanelWithInputAriaLabel', "{0}, Output panel", channel) : nls.localize('outputPanelAriaLabel', "Output panel");
+		const channel = this.outputService.getActiveChannel();
+		options.ariaLabel = channel ? nls.localize('outputPanelWithInputAriaLabel', "{0}, Output panel", channel.label) : nls.localize('outputPanelAriaLabel', "Output panel");
 
 		return options;
 	}
@@ -102,7 +106,7 @@ export class OutputPanel extends StringEditor {
 	}
 
 	public dispose(): void {
-		this.toDispose = lifecycle.disposeAll(this.toDispose);
+		this.toDispose = lifecycle.dispose(this.toDispose);
 		super.dispose();
 	}
 }

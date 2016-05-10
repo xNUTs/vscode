@@ -1,0 +1,26 @@
+[Desktop Entry]
+Name=@@NAME_LONG@@
+Comment=Code Editing. Redefined.
+GenericName=Text Editor
+Exec=/usr/bin/@@NAME@@ %U
+Icon=@@NAME@@
+Type=Application
+StartupNotify=true
+StartupWMClass=@@NAME@@
+Categories=Utility;TextEditor;Development;IDE;
+MimeType=text/plain;
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Name[de]=Neues Fenster
+Name[es]=Nueva ventana
+Name[fr]=Nouvelle fenêtre
+Name[it]=Nuova finestra
+Name[ja]=新規ウインドウ
+Name[ko]=새 창
+Name[ru]=Новое окно
+Name[zh_CN]=新建窗口
+Name[zh_TW]=開新視窗
+Exec=/usr/bin/@@NAME@@ --new-window %U
+Icon=@@NAME@@

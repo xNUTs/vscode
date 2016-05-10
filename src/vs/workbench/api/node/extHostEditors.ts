@@ -6,17 +6,17 @@
 
 import URI from 'vs/base/common/uri';
 import Event, {Emitter} from 'vs/base/common/event';
-import {IDisposable, disposeAll} from 'vs/base/common/lifecycle';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import {TPromise} from 'vs/base/common/winjs.base';
 import {Remotable, IThreadService} from 'vs/platform/thread/common/thread';
 import {ExtHostModelService, ExtHostDocumentData} from 'vs/workbench/api/node/extHostDocuments';
-import {Selection, Range, Position, EditorOptions} from './extHostTypes';
-import {ISingleEditOperation, ISelection, IRange, IInternalIndentationOptions, IEditor, EditorType, ICommonCodeEditor, ICommonDiffEditor, IDecorationRenderOptions, IRangeWithMessage} from 'vs/editor/common/editorCommon';
+import {Selection, Range, Position, EditorOptions, EndOfLine} from './extHostTypes';
+import {ISingleEditOperation, ISelection, IRange, IEditor, EditorType, ICommonCodeEditor, ICommonDiffEditor, IDecorationRenderOptions, IRangeWithMessage} from 'vs/editor/common/editorCommon';
 import {ICodeEditorService} from 'vs/editor/common/services/codeEditorService';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {Position as EditorPosition} from 'vs/platform/editor/common/editor';
 import {IModelService} from 'vs/editor/common/services/modelService';
-import {MainThreadEditorsTracker, TextEditorRevealType, MainThreadTextEditor, ITextEditorConfiguration} from 'vs/workbench/api/node/mainThreadEditors';
+import {MainThreadEditorsTracker, TextEditorRevealType, MainThreadTextEditor, ITextEditorConfigurationUpdate, IResolvedTextEditorConfiguration} from 'vs/workbench/api/node/mainThreadEditors';
 import * as TypeConverters from './extHostTypeConverters';
 import {TextDocument, TextEditorSelectionChangeEvent, TextEditorOptionsChangeEvent, TextEditorOptions, TextEditorViewColumnChangeEvent, ViewColumn} from 'vscode';
 import {EventType} from 'vs/workbench/common/events';
@@ -28,7 +28,7 @@ import {equals as objectEquals} from 'vs/base/common/objects';
 export interface ITextEditorAddData {
 	id: string;
 	document: URI;
-	options: ITextEditorConfiguration;
+	options: IResolvedTextEditorConfiguration;
 	selections: ISelection[];
 	editorPosition: EditorPosition;
 }
@@ -37,7 +37,7 @@ export interface ITextEditorPositionData {
 	[id: string]: EditorPosition;
 }
 
-@Remotable.PluginHostContext('ExtHostEditors')
+@Remotable.ExtHostContext('ExtHostEditors')
 export class ExtHostEditors {
 
 	public onDidChangeTextEditorSelection: Event<TextEditorSelectionChangeEvent>;
@@ -77,7 +77,7 @@ export class ExtHostEditors {
 	}
 
 	getActiveTextEditor(): vscode.TextEditor {
-		return this._activeEditorId && this._editors[this._activeEditorId];
+		return this._editors[this._activeEditorId];
 	}
 
 	getVisibleTextEditors(): vscode.TextEditor[] {
@@ -94,7 +94,7 @@ export class ExtHostEditors {
 			if (editor) {
 				return editor;
 			} else {
-				throw new Error('Failed to create editor with id: ' + id);
+				throw new Error(`Failed to show text document ${document.uri.toString()}, should show in editor #${id}`);
 			}
 		});
 	}
@@ -111,7 +111,7 @@ export class ExtHostEditors {
 		this._editors[data.id] = newEditor;
 	}
 
-	_acceptOptionsChanged(id: string, opts: ITextEditorConfiguration): void {
+	_acceptOptionsChanged(id: string, opts: IResolvedTextEditorConfiguration): void {
 		let editor = this._editors[id];
 		editor._acceptOptions(opts);
 		this._onDidChangeTextEditorOptions.fire({
@@ -196,22 +196,26 @@ export interface ITextEditOperation {
 export interface IEditData {
 	documentVersionId: number;
 	edits: ITextEditOperation[];
+	setEndOfLine: EndOfLine;
 }
 
 export class TextEditorEdit {
 
 	private _documentVersionId: number;
 	private _collectedEdits: ITextEditOperation[];
+	private _setEndOfLine: EndOfLine;
 
 	constructor(document: vscode.TextDocument) {
 		this._documentVersionId = document.version;
 		this._collectedEdits = [];
+		this._setEndOfLine = 0;
 	}
 
 	finalize(): IEditData {
 		return {
 			documentVersionId: this._documentVersionId,
-			edits: this._collectedEdits
+			edits: this._collectedEdits,
+			setEndOfLine: this._setEndOfLine
 		};
 	}
 
@@ -259,6 +263,14 @@ export class TextEditorEdit {
 			text: null,
 			forceMoveMarkers: true
 		});
+	}
+
+	setEndOfLine(endOfLine:EndOfLine): void {
+		if (endOfLine !== EndOfLine.LF && endOfLine !== EndOfLine.CRLF) {
+			throw illegalArg('endOfLine');
+		}
+
+		this._setEndOfLine = endOfLine;
 	}
 }
 
@@ -435,7 +447,7 @@ class ExtHostTextEditor implements vscode.TextEditor {
 			};
 		});
 
-		return this._proxy._tryApplyEdits(this._id, editData.documentVersionId, edits);
+		return this._proxy._tryApplyEdits(this._id, editData.documentVersionId, edits, editData.setEndOfLine);
 	}
 
 	// ---- util
@@ -496,10 +508,10 @@ export class MainThreadEditors {
 
 	public dispose(): void {
 		Object.keys(this._textEditorsListenersMap).forEach((editorId) => {
-			disposeAll(this._textEditorsListenersMap[editorId]);
+			dispose(this._textEditorsListenersMap[editorId]);
 		});
 		this._textEditorsListenersMap = Object.create(null);
-		this._toDispose = disposeAll(this._toDispose);
+		this._toDispose = dispose(this._toDispose);
 	}
 
 	private _onTextEditorAdd(textEditor: MainThreadTextEditor): void {
@@ -525,7 +537,7 @@ export class MainThreadEditors {
 
 	private _onTextEditorRemove(textEditor: MainThreadTextEditor): void {
 		let id = textEditor.getId();
-		disposeAll(this._textEditorsListenersMap[id]);
+		dispose(this._textEditorsListenersMap[id]);
 		delete this._textEditorsListenersMap[id];
 		delete this._textEditorsMap[id];
 		this._proxy._acceptTextEditorRemove(id);
@@ -603,7 +615,7 @@ export class MainThreadEditors {
 		return result;
 	}
 
-	// --- from plugin host process
+	// --- from extension host process
 
 	_tryShowTextDocument(resource: URI, position: EditorPosition, preserveFocus: boolean): TPromise<string> {
 
@@ -613,6 +625,10 @@ export class MainThreadEditors {
 		};
 
 		return this._workbenchEditorService.openEditor(input, position).then(editor => {
+
+			if (!editor) {
+				return;
+			}
 
 			return new TPromise<void>(c => {
 				// not very nice but the way it is: changes to the editor state aren't
@@ -697,7 +713,7 @@ export class MainThreadEditors {
 		this._textEditorsMap[id].revealRange(range, revealType);
 	}
 
-	_trySetOptions(id: string, options: IInternalIndentationOptions): TPromise<any> {
+	_trySetOptions(id: string, options: ITextEditorConfigurationUpdate): TPromise<any> {
 		if (!this._textEditorsMap[id]) {
 			return TPromise.wrapError('TextEditor disposed');
 		}
@@ -705,11 +721,11 @@ export class MainThreadEditors {
 		return TPromise.as(null);
 	}
 
-	_tryApplyEdits(id: string, modelVersionId: number, edits: ISingleEditOperation[]): TPromise<boolean> {
+	_tryApplyEdits(id: string, modelVersionId: number, edits: ISingleEditOperation[], setEndOfLine:EndOfLine): TPromise<boolean> {
 		if (!this._textEditorsMap[id]) {
 			return TPromise.wrapError('TextEditor disposed');
 		}
-		return TPromise.as(this._textEditorsMap[id].applyEdits(modelVersionId, edits));
+		return TPromise.as(this._textEditorsMap[id].applyEdits(modelVersionId, edits, setEndOfLine));
 	}
 
 	_registerTextEditorDecorationType(key: string, options: IDecorationRenderOptions): void {

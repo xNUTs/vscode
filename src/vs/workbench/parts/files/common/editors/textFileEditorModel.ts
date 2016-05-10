@@ -15,7 +15,7 @@ import types = require('vs/base/common/types');
 import {IModelContentChangedEvent, EventType as EditorEventType} from 'vs/editor/common/editorCommon';
 import {IMode} from 'vs/editor/common/modes';
 import {EventType as WorkbenchEventType, ResourceEvent} from 'vs/workbench/common/events';
-import {LocalFileChangeEvent, EventType as FileEventType, TextFileChangeEvent, ITextFileService, IAutoSaveConfiguration} from 'vs/workbench/parts/files/common/files';
+import {EventType as FileEventType, TextFileChangeEvent, ITextFileService, IAutoSaveConfiguration} from 'vs/workbench/parts/files/common/files';
 import {EncodingMode, EditorModel, IEncodingSupport} from 'vs/workbench/common/editor';
 import {BaseTextEditorModel} from 'vs/workbench/common/editor/textEditorModel';
 import {IFileService, IFileStat, IFileOperationResult, FileOperationResult, IContent} from 'vs/platform/files/common/files';
@@ -184,12 +184,12 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 		return this.load(true /* force */).then(() => {
 
 			// Emit file change event
-			this.emitEvent(FileEventType.FILE_REVERTED, new TextFileChangeEvent(this.textEditorModel, oldStat, this.versionOnDiskStat));
+			this.emitEvent(FileEventType.FILE_REVERTED, new TextFileChangeEvent(this.resource, this.textEditorModel, oldStat, this.versionOnDiskStat));
 		}, (error) => {
 
 			// FileNotFound means the file got deleted meanwhile, so emit revert event because thats ok
 			if ((<IFileOperationResult>error).fileOperationResult === FileOperationResult.FILE_NOT_FOUND) {
-				this.emitEvent(FileEventType.FILE_REVERTED, new TextFileChangeEvent(this.textEditorModel, oldStat, this.versionOnDiskStat));
+				this.emitEvent(FileEventType.FILE_REVERTED, new TextFileChangeEvent(this.resource, this.textEditorModel, oldStat, this.versionOnDiskStat));
 			}
 
 			// Set flags back to previous values, we are still dirty if revert failed and we where
@@ -241,9 +241,9 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 			};
 			this.updateVersionOnDiskStat(resolvedStat);
 
-			// Keep the original charset to not loose it when saving
+			// Keep the original encoding to not loose it when saving
 			let oldEncoding = this.contentEncoding;
-			this.contentEncoding = content.charset;
+			this.contentEncoding = content.encoding;
 
 			// Handle events if encoding changed
 			if (this.preferredEncoding) {
@@ -335,7 +335,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 			this.setDirty(false);
 
 			// Emit event
-			this.emitEvent(FileEventType.FILE_REVERTED, new TextFileChangeEvent(this.textEditorModel, this.versionOnDiskStat));
+			this.emitEvent(FileEventType.FILE_REVERTED, new TextFileChangeEvent(this.resource, this.textEditorModel, this.versionOnDiskStat));
 
 			return;
 		}
@@ -365,7 +365,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 		// Emit as Event if we turned dirty
 		if (!wasDirty) {
 			let stat = this.cloneStat(this.versionOnDiskStat);
-			this.emitEvent(FileEventType.FILE_DIRTY, new TextFileChangeEvent(this.textEditorModel, stat, stat, <any>e));
+			this.emitEvent(FileEventType.FILE_DIRTY, new TextFileChangeEvent(this.resource, this.textEditorModel, stat, stat, <any>e));
 		}
 	}
 
@@ -398,7 +398,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 	/**
 	 * Saves the current versionId of this editor model if it is dirty.
 	 */
-	public save(overwriteReadonly?: boolean): TPromise<void> {
+	public save(overwriteReadonly?: boolean, overwriteEncoding?: boolean): TPromise<void> {
 		if (!this.isResolved()) {
 			return TPromise.as<void>(null);
 		}
@@ -408,10 +408,10 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 		// Cancel any currently running auto saves to make this the one that succeeds
 		this.cancelAutoSavePromises();
 
-		return this.doSave(this.versionId, false, overwriteReadonly);
+		return this.doSave(this.versionId, false, overwriteReadonly, overwriteEncoding);
 	}
 
-	private doSave(versionId: number, isAutoSave: boolean, overwriteReadonly?: boolean): TPromise<void> {
+	private doSave(versionId: number, isAutoSave: boolean, overwriteReadonly?: boolean, overwriteEncoding?: boolean): TPromise<void> {
 		diag('doSave(' + versionId + ') - enter with versionId ' + versionId, this.resource, new Date());
 
 		// Lookup any running pending save for this versionId and return it if found
@@ -452,7 +452,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 		let versionOnDiskStatClone = this.cloneStat(this.versionOnDiskStat);
 		this.blockModelContentChange = true;
 		try {
-			const saveEvent = new TextFileChangeEvent(this.textEditorModel, versionOnDiskStatClone);
+			const saveEvent = new TextFileChangeEvent(this.resource, this.textEditorModel, versionOnDiskStatClone);
 			saveEvent.setAutoSaved(isAutoSave);
 			this.emitEvent(FileEventType.FILE_SAVING, saveEvent);
 		} finally {
@@ -467,8 +467,9 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 		diag('doSave(' + versionId + ') - before updateContent()', this.resource, new Date());
 		this.mapPendingSaveToVersionId[versionId] = this.fileService.updateContent(this.versionOnDiskStat.resource, this.getValue(), {
 			overwriteReadonly: overwriteReadonly,
+			overwriteEncoding: overwriteEncoding,
 			mtime: this.versionOnDiskStat.mtime,
-			charset: this.getEncoding(),
+			encoding: this.getEncoding(),
 			etag: this.versionOnDiskStat.etag
 		}).then((stat: IFileStat) => {
 			diag('doSave(' + versionId + ') - after updateContent()', this.resource, new Date());
@@ -494,10 +495,10 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 			// Emit File Change Event
 			let oldValue = this.cloneStat(oldStat);
 			let newValue = this.cloneStat(this.versionOnDiskStat);
-			this.emitEvent('files.internal:fileChanged', new TextFileChangeEvent(this.textEditorModel, oldValue, newValue));
+			this.emitEvent('files.internal:fileChanged', new TextFileChangeEvent(this.resource, this.textEditorModel, oldValue, newValue));
 
 			// Emit File Saved Event
-			this.emitEvent(FileEventType.FILE_SAVED, new TextFileChangeEvent(this.textEditorModel, oldValue, newValue));
+			this.emitEvent(FileEventType.FILE_SAVED, new TextFileChangeEvent(this.resource, this.textEditorModel, oldValue, newValue));
 		}, (error) => {
 			diag('doSave(' + versionId + ') - exit - resulted in a save error: ' + error.toString(), this.resource, new Date());
 
@@ -511,7 +512,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 			this.onSaveError(error);
 
 			// Emit as event
-			this.emitEvent(FileEventType.FILE_SAVE_ERROR, new TextFileChangeEvent(this.textEditorModel, versionOnDiskStatClone));
+			this.emitEvent(FileEventType.FILE_SAVE_ERROR, new TextFileChangeEvent(this.resource, this.textEditorModel, versionOnDiskStatClone));
 		});
 
 		return this.mapPendingSaveToVersionId[versionId];
@@ -575,7 +576,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 		TextFileEditorModel.saveErrorHandler.onSaveError(error, this);
 	}
 
-	private emitEvent(type: string, event: LocalFileChangeEvent): void {
+	private emitEvent(type: string, event: TextFileChangeEvent): void {
 		try {
 			this.eventService.emit(type, event);
 		} catch (e) {
@@ -654,7 +655,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 			}
 
 			if (!this.inConflictResolutionMode) {
-				this.save().done(null, onUnexpectedError);
+				this.save(false, true /* overwriteEncoding due to forced encoding change */).done(null, onUnexpectedError);
 			}
 		}
 
@@ -673,7 +674,7 @@ export class TextFileEditorModel extends BaseTextEditorModel implements IEncodin
 		}
 	}
 
-	private updatePreferredEncoding(encoding: string): void {
+	public updatePreferredEncoding(encoding: string): void {
 		if (!this.isNewEncoding(encoding)) {
 			return;
 		}

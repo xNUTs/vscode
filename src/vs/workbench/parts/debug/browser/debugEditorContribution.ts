@@ -23,9 +23,7 @@ import { IContextMenuService } from 'vs/platform/contextview/browser/contextView
 
 const HOVER_DELAY = 300;
 
-export class DebugEditorContribution implements editorcommon.IEditorContribution {
-
-	static ID = 'editor.contrib.debug';
+export class DebugEditorContribution implements debug.IDebugEditorContribution {
 
 	private toDispose: lifecycle.IDisposable[];
 	private breakpointHintDecoration: string[];
@@ -35,17 +33,21 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 	private hoverRange: editorcommon.IEditorRange;
 	private hoveringOver: string;
 
+	static getDebugEditorContribution(editor: editorcommon.ICommonCodeEditor): DebugEditorContribution {
+		return <DebugEditorContribution>editor.getContribution(debug.EDITOR_CONTRIBUTION_ID);
+	}
+
 	constructor(
 		private editor: editorbrowser.ICodeEditor,
 		@debug.IDebugService private debugService: debug.IDebugService,
 		@IWorkspaceContextService private contextService: IWorkspaceContextService,
 		@IContextMenuService private contextMenuService: IContextMenuService,
-		@IInstantiationService private instantiationService:IInstantiationService
+		@IInstantiationService private instantiationService: IInstantiationService
 	) {
 		this.breakpointHintDecoration = [];
-		this.toDispose = [];
 		this.hoverWidget = new DebugHoverWidget(this.editor, this.debugService, this.instantiationService);
-		this.showHoverScheduler = new RunOnceScheduler(() => this.hoverWidget.showAt(this.hoverRange, this.hoveringOver), HOVER_DELAY);
+		this.toDispose = [this.hoverWidget];
+		this.showHoverScheduler = new RunOnceScheduler(() => this.showHover(this.hoverRange, this.hoveringOver, false), HOVER_DELAY);
 		this.hideHoverScheduler = new RunOnceScheduler(() => this.hoverWidget.hide(), HOVER_DELAY);
 		this.registerListeners();
 	}
@@ -62,7 +64,7 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 				nls.localize('addBreakpoint', "Add Breakpoint"),
 				null,
 				true,
-				() =>  this.debugService.toggleBreakpoint({ uri, lineNumber })
+				() => this.debugService.addBreakpoints([{ uri, lineNumber }])
 			));
 			actions.push(this.instantiationService.createInstance(debugactions.AddConditionalBreakpointAction, debugactions.AddConditionalBreakpointAction.ID, debugactions.AddConditionalBreakpointAction.LABEL, this.editor, lineNumber));
 		}
@@ -71,18 +73,18 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 	}
 
 	private registerListeners(): void {
-		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseDown, (e: editorbrowser.IMouseEvent) => {
+		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseDown, (e: editorbrowser.IEditorMouseEvent) => {
 			if (e.target.type !== editorcommon.MouseTargetType.GUTTER_GLYPH_MARGIN || /* after last line */ e.target.detail) {
 				return;
 			}
-			if (!this.debugService.canSetBreakpointsIn(this.editor.getModel())) {
+			if (!this.debugService.getConfigurationManager().canSetBreakpointsIn(this.editor.getModel())) {
 				return;
 			}
 
 			const lineNumber = e.target.position.lineNumber;
 			const uri = this.editor.getModel().getAssociatedResource();
 
-			if (e.event.rightButton) {
+			if (e.event.rightButton || (env.isMacintosh && e.event.leftButton && e.event.ctrlKey)) {
 				const anchor = { x: e.event.posx + 1, y: e.event.posy };
 				const breakpoint = this.debugService.getModel().getBreakpoints().filter(bp => bp.lineNumber === lineNumber && bp.source.uri.toString() === uri.toString()).pop();
 
@@ -92,13 +94,20 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 					getActionsContext: () => breakpoint
 				});
 			} else {
-				this.debugService.toggleBreakpoint({ uri, lineNumber });
+				const breakpoint = this.debugService.getModel().getBreakpoints()
+					.filter(bp => bp.source.uri.toString() === uri.toString() && bp.lineNumber === lineNumber).pop();
+
+				if (breakpoint) {
+					this.debugService.removeBreakpoints(breakpoint.getId());
+				} else {
+					this.debugService.addBreakpoints([{ uri, lineNumber }]);
+				}
 			}
 		}));
 
-		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseMove, (e: editorbrowser.IMouseEvent) => {
+		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseMove, (e: editorbrowser.IEditorMouseEvent) => {
 			var showBreakpointHintAtLineNumber = -1;
-			if (e.target.type === editorcommon.MouseTargetType.GUTTER_GLYPH_MARGIN && this.debugService.canSetBreakpointsIn(this.editor.getModel())) {
+			if (e.target.type === editorcommon.MouseTargetType.GUTTER_GLYPH_MARGIN && this.debugService.getConfigurationManager().canSetBreakpointsIn(this.editor.getModel())) {
 				if (!e.target.detail) {
 					// is not after last line
 					showBreakpointHintAtLineNumber = e.target.position.lineNumber;
@@ -106,22 +115,26 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 			}
 			this.ensureBreakpointHintDecoration(showBreakpointHintAtLineNumber);
 		}));
-		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseLeave, (e: editorbrowser.IMouseEvent) => {
+		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseLeave, (e: editorbrowser.IEditorMouseEvent) => {
 			this.ensureBreakpointHintDecoration(-1);
 		}));
-		this.toDispose.push(this.debugService.addListener2(debug.ServiceEvents.STATE_CHANGED, () => this.onDebugStateUpdate()));
+		this.toDispose.push(this.debugService.onDidChangeState(state => this.onDebugStateUpdate(state)));
 
 		// hover listeners & hover widget
-		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseDown, (e: editorbrowser.IMouseEvent) => this.onEditorMouseDown(e)));
-		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseMove, (e: editorbrowser.IMouseEvent) => this.onEditorMouseMove(e)));
-		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseLeave, (e: editorbrowser.IMouseEvent) => this.hoverWidget.hide()));
-		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.KeyDown, (e: keyboard.StandardKeyboardEvent) => this.onKeyDown(e)));
+		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseDown, (e: editorbrowser.IEditorMouseEvent) => this.onEditorMouseDown(e)));
+		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseMove, (e: editorbrowser.IEditorMouseEvent) => this.onEditorMouseMove(e)));
+		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.MouseLeave, (e: editorbrowser.IEditorMouseEvent) => this.hoverWidget.hide()));
+		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.KeyDown, (e: keyboard.IKeyboardEvent) => this.onKeyDown(e)));
 		this.toDispose.push(this.editor.addListener2(editorcommon.EventType.ModelChanged, () => this.hideHoverWidget()));
 		this.toDispose.push(this.editor.addListener2('scroll', () => this.hideHoverWidget));
 	}
 
 	public getId(): string {
-		return DebugEditorContribution.ID;
+		return debug.EDITOR_CONTRIBUTION_ID;
+	}
+
+	public showHover(range: editorcommon.IEditorRange, hoveringOver: string, focus: boolean): TPromise<void> {
+		return this.hoverWidget.showAt(range, hoveringOver, focus);
 	}
 
 	private ensureBreakpointHintDecoration(showBreakpointHintAtLineNumber: number): void {
@@ -141,17 +154,17 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 		this.breakpointHintDecoration = this.editor.deltaDecorations(this.breakpointHintDecoration, newDecoration);
 	}
 
-	private onDebugStateUpdate(): void {
-		if (this.debugService.getState() !== debug.State.Stopped) {
+	private onDebugStateUpdate(state: debug.State): void {
+		if (state !== debug.State.Stopped) {
 			this.hideHoverWidget();
 		}
 		this.contextService.updateOptions('editor', {
-			hover: this.debugService.getState() !== debug.State.Stopped
+			hover: state !== debug.State.Stopped
 		});
 	}
 
 	private hideHoverWidget(): void {
-		if (!this.hideHoverScheduler.isScheduled()) {
+		if (!this.hideHoverScheduler.isScheduled() && this.hoverWidget.isVisible) {
 			this.hideHoverScheduler.schedule();
 		}
 		this.showHoverScheduler.cancel();
@@ -160,7 +173,7 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 
 	// hover business
 
-	private onEditorMouseDown(mouseEvent: editorbrowser.IMouseEvent): void {
+	private onEditorMouseDown(mouseEvent: editorbrowser.IEditorMouseEvent): void {
 		if (mouseEvent.target.type === editorcommon.MouseTargetType.CONTENT_WIDGET && mouseEvent.target.detail === DebugHoverWidget.ID) {
 			return;
 		}
@@ -168,8 +181,8 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 		this.hideHoverWidget();
 	}
 
-	private onEditorMouseMove(mouseEvent: editorbrowser.IMouseEvent): void {
-		if (this.debugService.getState() !== debug.State.Stopped) {
+	private onEditorMouseMove(mouseEvent: editorbrowser.IEditorMouseEvent): void {
+		if (this.debugService.state !== debug.State.Stopped) {
 			return;
 		}
 
@@ -192,7 +205,7 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 		}
 	}
 
-	private onKeyDown(e: keyboard.StandardKeyboardEvent): void {
+	private onKeyDown(e: keyboard.IKeyboardEvent): void {
 		const stopKey = env.isMacintosh ? KeyCode.Meta : KeyCode.Ctrl;
 		if (e.keyCode !== stopKey) {
 			// do not hide hover when Ctrl/Meta is pressed
@@ -208,6 +221,6 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 	};
 
 	public dispose(): void {
-		this.toDispose = lifecycle.disposeAll(this.toDispose);
+		this.toDispose = lifecycle.dispose(this.toDispose);
 	}
 }

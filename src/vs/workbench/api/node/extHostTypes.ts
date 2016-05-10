@@ -37,8 +37,8 @@ export class Disposable {
 }
 
 export interface EditorOptions {
-	tabSize: number;
-	insertSpaces: boolean;
+	tabSize: number | string;
+	insertSpaces: boolean | string;
 }
 
 export class Position {
@@ -290,10 +290,10 @@ export class Selection extends Range {
 			throw new Error('Invalid arguments');
 		}
 
+		super(anchor, active);
+
 		this._anchor = anchor;
 		this._active = active;
-
-		super(anchor, active);
 	}
 
 	get isReversed(): boolean {
@@ -688,3 +688,9 @@ export enum StatusBarAlignment {
 	Left = 1,
 	Right = 2
 }
+
+export enum EndOfLine {
+	LF = 1,
+	CRLF = 2
+}
+

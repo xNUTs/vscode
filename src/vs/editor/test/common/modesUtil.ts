@@ -4,19 +4,18 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import assert = require('assert');
-import {TPromise} from 'vs/base/common/winjs.base';
-import servicesUtil = require('vs/editor/test/common/servicesTestUtils');
-import modes = require('vs/editor/common/modes');
-import monarchTypes = require('vs/editor/common/modes/monarch/monarchTypes');
-import monarchCompile = require('vs/editor/common/modes/monarch/monarchCompile');
-import monarchLexer = require('vs/editor/common/modes/monarch/monarchLexer');
+import * as assert from 'assert';
 import {Model} from 'vs/editor/common/model/model';
+import * as modes from 'vs/editor/common/modes';
+import {compile} from 'vs/editor/common/modes/monarch/monarchCompile';
+import {createTokenizationSupport} from 'vs/editor/common/modes/monarch/monarchLexer';
+import {ILanguage} from 'vs/editor/common/modes/monarch/monarchTypes';
+import {createMockModeService} from 'vs/editor/test/common/servicesTestUtils';
+import {MockMode} from 'vs/editor/test/common/mocks/mockMode';
 
 export interface IRelaxedToken {
 	startIndex:number;
 	type:string;
-	bracket?:modes.Bracket;
 }
 
 export interface ITestItem {
@@ -26,18 +25,6 @@ export interface ITestItem {
 
 export function assertWords(actual:string[], expected:string[], message?:string): void {
 	assert.deepEqual(actual, expected, message);
-}
-
-export function load(modeId: string, preloadModes: string[] = [] ): TPromise<modes.IMode> {
-	var toLoad:string[] = [].concat(preloadModes).concat([modeId]);
-
-	var modeService = servicesUtil.createMockModeService();
-
-	var promises = toLoad.map(modeId => modeService.getOrCreateMode(modeId));
-
-	return TPromise.join(promises).then(modes => {
-		return modes[modes.length -1];
-	});
 }
 
 export function assertTokenization(tokenizationSupport: modes.ITokenizationSupport, tests: ITestItem[]): void {
@@ -60,28 +47,12 @@ export interface IOnEnterAsserter {
 	indentsOutdents(oneLineAboveText:string, beforeText:string, afterText:string): void;
 }
 
-class SimpleMode implements modes.IMode {
-
-	private _id:string;
-
-	constructor(id:string) {
-		this._id = id;
-	}
-
-	public getId(): string {
-		return this._id;
-	}
-
-	public toSimplifiedMode(): modes.IMode {
-		return this;
-	}
-}
-
 export function createOnEnterAsserter(modeId:string, richEditSupport: modes.IRichEditSupport): IOnEnterAsserter {
 	var assertOne = (oneLineAboveText:string, beforeText:string, afterText:string, expected: modes.IndentAction) => {
 		var model = new Model(
 			[ oneLineAboveText, beforeText + afterText ].join('\n'),
-			new SimpleMode(modeId)
+			Model.DEFAULT_CREATION_OPTIONS,
+			new MockMode(modeId)
 		);
 		var actual = richEditSupport.onEnter.onEnter(model, { lineNumber: 2, column: beforeText.length + 1 });
 		if (expected === modes.IndentAction.None) {
@@ -115,12 +86,12 @@ export function executeTests(tokenizationSupport: modes.ITokenizationSupport, te
 }
 
 
-export function executeMonarchTokenizationTests(name:string, language:monarchTypes.ILanguage, tests:ITestItem[][]): void {
-	var lexer = monarchCompile.compile(language);
+export function executeMonarchTokenizationTests(name:string, language:ILanguage, tests:ITestItem[][]): void {
+	var lexer = compile(language);
 
-	var modeService = servicesUtil.createMockModeService();
+	var modeService = createMockModeService();
 
-	var tokenizationSupport = monarchLexer.createTokenizationSupport(modeService, new SimpleMode('mock.mode'), lexer);
+	var tokenizationSupport = createTokenizationSupport(modeService, new MockMode(), lexer);
 
 	executeTests(tokenizationSupport, tests);
 }

@@ -9,7 +9,7 @@ import nls = require('vs/nls');
 import {TPromise} from 'vs/base/common/winjs.base';
 import paths = require('vs/base/common/paths');
 import strings = require('vs/base/common/strings');
-import {isWindows} from 'vs/base/common/platform';
+import {isWindows, isLinux} from 'vs/base/common/platform';
 import URI from 'vs/base/common/uri';
 import {UntitledEditorModel} from 'vs/workbench/common/editor/untitledEditorModel';
 import {IEventService} from 'vs/platform/event/common/event';
@@ -18,38 +18,45 @@ import {CACHE, TextFileEditorModel} from 'vs/workbench/parts/files/common/editor
 import {ITextFileOperationResult, ConfirmResult, AutoSaveMode} from 'vs/workbench/parts/files/common/files';
 import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
 import {IFileService} from 'vs/platform/files/common/files';
+import {BinaryEditorModel} from 'vs/workbench/common/editor/binaryEditorModel';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {ILifecycleService} from 'vs/platform/lifecycle/common/lifecycle';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {IModeService} from 'vs/editor/common/services/modeService';
-
-import {remote} from 'electron';
+import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
+import {IWindowService} from 'vs/workbench/services/window/electron-browser/windowService';
 
 export class TextFileService extends AbstractTextFileService {
-
-	private modeService: IModeService;
 
 	constructor(
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IFileService private fileService: IFileService,
 		@IUntitledEditorService private untitledEditorService: IUntitledEditorService,
-		@ILifecycleService lifecycleService: ILifecycleService,
+		@ILifecycleService private lifecycleService: ILifecycleService,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IEventService eventService: IEventService,
-		@IModeService modeService: IModeService
+		@IModeService private modeService: IModeService,
+		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
+		@IWindowService private windowService: IWindowService
 	) {
-		super(contextService, instantiationService, configurationService, telemetryService, lifecycleService, eventService);
-		this.modeService = modeService;
+		super(contextService, instantiationService, configurationService, telemetryService, eventService);
 
 		this.init();
 	}
 
+	protected registerListeners(): void {
+		super.registerListeners();
+
+		// Lifecycle
+		this.lifecycleService.onWillShutdown(event => event.veto(this.beforeShutdown()));
+		this.lifecycleService.onShutdown(this.onShutdown, this);
+	}
+
 	public beforeShutdown(): boolean | TPromise<boolean> {
-		super.beforeShutdown();
 
 		// Dirty files need treatment on shutdown
 		if (this.getDirty().length) {
@@ -95,6 +102,14 @@ export class TextFileService extends AbstractTextFileService {
 		else if (confirm === ConfirmResult.CANCEL) {
 			return true; // veto
 		}
+	}
+
+	private onShutdown(): void {
+
+		// Propagate to working files model
+		this.workingFilesModel.shutdown();
+
+		super.dispose();
 	}
 
 	public revertAll(resources?: URI[], force?: boolean): TPromise<ITextFileOperationResult> {
@@ -144,8 +159,8 @@ export class TextFileService extends AbstractTextFileService {
 	}
 
 	public confirmSave(resources?: URI[]): ConfirmResult {
-		if (!!this.contextService.getConfiguration().env.pluginDevelopmentPath) {
-			return ConfirmResult.DONT_SAVE; // no veto when we are in plugin dev mode because we cannot assum we run interactive (e.g. tests)
+		if (!!this.contextService.getConfiguration().env.extensionDevelopmentPath) {
+			return ConfirmResult.DONT_SAVE; // no veto when we are in extension dev mode because we cannot assum we run interactive (e.g. tests)
 		}
 
 		let resourcesToConfirm = this.getDirty(resources);
@@ -165,17 +180,20 @@ export class TextFileService extends AbstractTextFileService {
 
 		// Button order
 		// Windows: Save | Don't Save | Cancel
-		// Mac/Linux: Save | Cancel | Don't
+		// Mac: Save | Cancel | Don't Save
+		// Linux: Don't Save | Cancel | Save
 
-		const save = { label: resourcesToConfirm.length > 1 ? this.mnemonicLabel(nls.localize('saveAll', "&&Save All")) : this.mnemonicLabel(nls.localize('save', "&&Save")), result: ConfirmResult.SAVE };
-		const dontSave = { label: this.mnemonicLabel(nls.localize('dontSave', "Do&&n't Save")), result: ConfirmResult.DONT_SAVE };
+		const save = { label: resourcesToConfirm.length > 1 ? this.mnemonicLabel(nls.localize({ key: 'saveAll', comment: ['&& denotes a mnemonic'] }, "&&Save All")) : this.mnemonicLabel(nls.localize({ key: 'save', comment: ['&& denotes a mnemonic'] }, "&&Save")), result: ConfirmResult.SAVE };
+		const dontSave = { label: this.mnemonicLabel(nls.localize({ key: 'dontSave', comment: ['&& denotes a mnemonic'] }, "Do&&n't Save")), result: ConfirmResult.DONT_SAVE };
 		const cancel = { label: nls.localize('cancel', "Cancel"), result: ConfirmResult.CANCEL };
 
-		const buttons = [save];
+		const buttons = [];
 		if (isWindows) {
-			buttons.push(dontSave, cancel);
+			buttons.push(save, dontSave, cancel);
+		} else if (isLinux) {
+			buttons.push(dontSave, cancel, save);
 		} else {
-			buttons.push(cancel, dontSave);
+			buttons.push(save, cancel, dontSave);
 		}
 
 		let opts: Electron.Dialog.ShowMessageBoxOptions = {
@@ -188,7 +206,11 @@ export class TextFileService extends AbstractTextFileService {
 			cancelId: buttons.indexOf(cancel)
 		};
 
-		const choice = remote.dialog.showMessageBox(remote.getCurrentWindow(), opts);
+		if (isLinux) {
+			opts.defaultId = 2;
+		}
+
+		const choice = this.windowService.getWindow().showMessageBox(opts);
 
 		return buttons[choice].result;
 	}
@@ -329,7 +351,7 @@ export class TextFileService extends AbstractTextFileService {
 
 			// We have a model: Use it (can be null e.g. if this file is binary and not a text file or was never opened before)
 			if (model) {
-				return this.fileService.updateContent(target, model.getValue(), { charset: model.getEncoding() });
+				return this.doSaveTextFileAs(model, resource, target);
 			}
 
 			// Otherwise we can only copy
@@ -348,6 +370,26 @@ export class TextFileService extends AbstractTextFileService {
 		});
 	}
 
+	private doSaveTextFileAs(sourceModel: TextFileEditorModel | UntitledEditorModel, resource: URI, target: URI): TPromise<void> {
+		// create the target file empty if it does not exist already
+		return this.fileService.resolveFile(target).then(stat => stat, () => null).then(stat => stat || this.fileService.createFile(target)).then(stat => {
+			// resolve a model for the file (which can be binary if the file is not a text file)
+			return this.editorService.resolveEditorModel({ resource: target }).then((targetModel: TextFileEditorModel) => {
+				// binary model: delete the file and run the operation again
+				if (targetModel instanceof BinaryEditorModel) {
+					return this.fileService.del(target).then(() => this.doSaveTextFileAs(sourceModel, resource, target));
+				}
+
+				// text model: take over encoding and model value from source model
+				targetModel.updatePreferredEncoding(sourceModel.getEncoding());
+				targetModel.textEditorModel.setValue(sourceModel.getValue());
+
+				// save model
+				return targetModel.save();
+			});
+		});
+	}
+
 	private suggestFileName(untitledResource: URI): string {
 		let workspace = this.contextService.getWorkspace();
 		if (workspace) {
@@ -359,14 +401,14 @@ export class TextFileService extends AbstractTextFileService {
 
 	private promptForPathAsync(defaultPath?: string): TPromise<string> {
 		return new TPromise<string>((c, e) => {
-			remote.dialog.showSaveDialog(remote.getCurrentWindow(), this.getSaveDialogOptions(defaultPath ? paths.normalize(defaultPath, true) : void 0), (path) => {
+			this.windowService.getWindow().showSaveDialog(this.getSaveDialogOptions(defaultPath ? paths.normalize(defaultPath, true) : void 0), (path) => {
 				c(path);
 			});
 		});
 	}
 
 	private promptForPathSync(defaultPath?: string): string {
-		return remote.dialog.showSaveDialog(remote.getCurrentWindow(), this.getSaveDialogOptions(defaultPath ? paths.normalize(defaultPath, true) : void 0));
+		return this.windowService.getWindow().showSaveDialog(this.getSaveDialogOptions(defaultPath ? paths.normalize(defaultPath, true) : void 0));
 	}
 
 	private getSaveDialogOptions(defaultPath?: string): Electron.Dialog.SaveDialogOptions {
@@ -376,7 +418,7 @@ export class TextFileService extends AbstractTextFileService {
 
 		// Filters are working flaky in Electron and there are bugs. On Windows they are working
 		// somewhat but we see issues:
-		// - https://github.com/atom/electron/issues/3556
+		// - https://github.com/electron/electron/issues/3556
 		// - https://github.com/Microsoft/vscode/issues/451
 		// - Bug on Windows: When "All Files" is picked, the path gets an extra ".*"
 		// Until these issues are resolved, we disable the dialog file extension filtering.

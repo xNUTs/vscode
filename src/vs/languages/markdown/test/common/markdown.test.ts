@@ -4,21 +4,77 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import 'vs/languages/markdown/common/markdown.contribution';
 import modesUtil = require('vs/editor/test/common/modesUtil');
 import Modes = require('vs/editor/common/modes');
 import {htmlTokenTypes} from 'vs/languages/html/common/html';
-import {cssTokenTypes} from 'vs/languages/css/common/css';
+import {MockModeService} from 'vs/editor/test/common/mocks/mockModeService';
+import {NULL_THREAD_SERVICE} from 'vs/platform/test/common/nullThreadService';
+import {IThreadService} from 'vs/platform/thread/common/thread';
+import {IModeService} from 'vs/editor/common/services/modeService';
+import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
+import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
+import {MarkdownMode} from 'vs/languages/markdown/common/markdown';
+import {MockTokenizingMode} from 'vs/editor/test/common/mocks/mockMode';
+
+class MarkdownMockModeService extends MockModeService {
+	isRegisteredMode(mimetypeOrModeId: string): boolean {
+		if (mimetypeOrModeId === 'javascript') {
+			return true;
+		}
+		if (mimetypeOrModeId === 'css') {
+			return true;
+		}
+		throw new Error('Not implemented');
+	}
+
+	getMode(commaSeparatedMimetypesOrCommaSeparatedIds: string): Modes.IMode {
+		if (commaSeparatedMimetypesOrCommaSeparatedIds === 'javascript') {
+			return new MockTokenizingMode('js', 'mock-js');
+		}
+		if (commaSeparatedMimetypesOrCommaSeparatedIds === 'css') {
+			return new MockTokenizingMode('css', 'mock-css');
+		}
+		throw new Error('Not implemented');
+	}
+
+	getModeIdForLanguageName(alias:string): string {
+		if (alias === 'text/javascript') {
+			return 'javascript';
+		}
+		if (alias === 'text/css') {
+			return 'css';
+		}
+		console.log(alias);
+		throw new Error('Not implemented');
+	}
+}
 
 suite('Markdown - tokenization', () => {
 
 	var tokenizationSupport: Modes.ITokenizationSupport;
-	setup((done) => {
-		modesUtil.load('markdown', ['html']).then(mode => {
-			tokenizationSupport = mode.tokenizationSupport;
-			done();
-		});
-	});
+
+	(function() {
+		let threadService = NULL_THREAD_SERVICE;
+		let modeService = new MarkdownMockModeService();
+		let services = new ServiceCollection();
+		services.set(IThreadService, threadService);
+		services.set(IModeService, modeService);
+		let inst = new InstantiationService(services);
+		threadService.setInstantiationService(inst);
+
+		let mode = new MarkdownMode(
+			{ id: 'markdown' },
+			inst,
+			threadService,
+			modeService,
+			null,
+			null,
+			null
+		);
+
+		tokenizationSupport = mode.tokenizationSupport;
+
+	})();
 
 	test('', () => {
 		modesUtil.executeTests(tokenizationSupport, [
@@ -26,46 +82,34 @@ suite('Markdown - tokenization', () => {
 			[{
 			line: '<b>foo</b>*bar*',
 			tokens: [
-				{ startIndex:0, type: htmlTokenTypes.getTag('b.md'), bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: htmlTokenTypes.getTag('b.md') },
 				{ startIndex:3, type: '' },
-				{ startIndex:6, type: htmlTokenTypes.getTag('b.md'), bracket: Modes.Bracket.Close },
+				{ startIndex:6, type: htmlTokenTypes.getTag('b.md') },
 				{ startIndex:10, type: 'emphasis.md' }
 			]}],
 
 			[{
 			line: '</b>*bar*',
 			tokens: [
-				{ startIndex:0, type: htmlTokenTypes.getTag('b.md'), bracket: Modes.Bracket.Close },
+				{ startIndex:0, type: htmlTokenTypes.getTag('b.md') },
 				{ startIndex:4, type: 'emphasis.md' }
 			]}],
 
 			[{
 			line: '<script>alert("foo")</script>*bar*',
 			tokens: [
-				{ startIndex:0, type: htmlTokenTypes.getTag('script.md'), bracket: Modes.Bracket.Open },
-				{ startIndex:8, type: 'identifier.js' },
-				{ startIndex:13, type: 'delimiter.parenthesis.js', bracket: Modes.Bracket.Open },
-				{ startIndex:14, type: 'string.js' },
-				{ startIndex:19, type: 'delimiter.parenthesis.js', bracket: Modes.Bracket.Close },
-				{ startIndex:20, type: htmlTokenTypes.getTag('script.md'), bracket: Modes.Bracket.Close },
+				{ startIndex:0, type: htmlTokenTypes.getTag('script.md') },
+				{ startIndex:8, type: 'mock-js' },
+				{ startIndex:20, type: htmlTokenTypes.getTag('script.md') },
 				{ startIndex:29, type: 'emphasis.md' }
 			]}],
 
 			[{
 			line: '<style>div { background: red }</style>*bar*',
 			tokens: [
-				{ startIndex:0, type: htmlTokenTypes.getTag('style.md'), bracket: Modes.Bracket.Open },
-				{ startIndex:7, type: cssTokenTypes.TOKEN_SELECTOR_TAG + '.css' },
-				{ startIndex:10, type: '' },
-				{ startIndex:11, type: 'punctuation.bracket.css', bracket: Modes.Bracket.Open },
-				{ startIndex:12, type: '' },
-				{ startIndex:13, type: cssTokenTypes.TOKEN_PROPERTY + '.css' },
-				{ startIndex:23, type: 'punctuation.css' },
-				{ startIndex:24, type: '' },
-				{ startIndex:25, type: cssTokenTypes.TOKEN_VALUE + '.css' },
-				{ startIndex:28, type: '' },
-				{ startIndex:29, type: 'punctuation.bracket.css', bracket: Modes.Bracket.Close },
-				{ startIndex:30, type: htmlTokenTypes.getTag('style.md'), bracket: Modes.Bracket.Close },
+				{ startIndex:0, type: htmlTokenTypes.getTag('style.md') },
+				{ startIndex:7, type: 'mock-css' },
+				{ startIndex:30, type: htmlTokenTypes.getTag('style.md') },
 				{ startIndex:38, type: 'emphasis.md' }
 			]}]
 		]);

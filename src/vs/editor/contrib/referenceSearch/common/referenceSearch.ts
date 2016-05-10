@@ -5,19 +5,16 @@
 
 'use strict';
 
-import {IReferenceSupport, IReference} from 'vs/editor/common/modes';
-import {IModel, IPosition} from 'vs/editor/common/editorCommon';
-import {TPromise} from 'vs/base/common/winjs.base';
 import {onUnexpectedError} from 'vs/base/common/errors';
-import LanguageFeatureRegistry from 'vs/editor/common/modes/languageFeatureRegistry';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {IModel, IPosition} from 'vs/editor/common/editorCommon';
 import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
-
-export const ReferenceRegistry = new LanguageFeatureRegistry<IReferenceSupport>('referenceSupport');
+import {IReference, ReferenceSearchRegistry} from 'vs/editor/common/modes';
 
 export function findReferences(model: IModel, position: IPosition): TPromise<IReference[]> {
 
 	// collect references from all providers
-	const promises = ReferenceRegistry.ordered(model).map(provider => {
+	const promises = ReferenceSearchRegistry.ordered(model).map(provider => {
 		return provider.findReferences(model.getAssociatedResource(), position, true).then(result => {
 			if (Array.isArray(result)) {
 				return <IReference[]> result;

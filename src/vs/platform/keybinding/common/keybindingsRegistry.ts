@@ -4,16 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {Registry} from 'vs/platform/platform';
+import {BinaryKeybindings, KeyCode} from 'vs/base/common/keyCodes';
+import * as platform from 'vs/base/common/platform';
 import {TypeConstraint, validateConstraints} from 'vs/base/common/types';
 import {ICommandHandler, ICommandHandlerDescription, ICommandsMap, IKeybindingItem, IKeybindings, KbExpr} from 'vs/platform/keybinding/common/keybindingService';
-import {KeyCode, BinaryKeybindings} from 'vs/base/common/keyCodes';
-import Platform = require('vs/base/common/platform');
+import {Registry} from 'vs/platform/platform';
 
 export interface ICommandRule extends IKeybindings {
 	id: string;
 	weight: number;
-	context: KbExpr;
+	when: KbExpr;
 }
 
 export interface ICommandDescriptor extends ICommandRule {
@@ -68,11 +68,11 @@ class KeybindingsRegistryImpl implements IKeybindingsRegistry {
 	 * Take current platform into account and reduce to primary & secondary.
 	 */
 	private static bindToCurrentPlatform(kb: IKeybindings): { primary?: number; secondary?: number[]; } {
-		if (Platform.isWindows) {
+		if (platform.isWindows) {
 			if (kb && kb.win) {
 				return kb.win;
 			}
-		} else if (Platform.isMacintosh) {
+		} else if (platform.isMacintosh) {
 			if (kb && kb.mac) {
 				return kb.mac;
 			}
@@ -88,12 +88,14 @@ class KeybindingsRegistryImpl implements IKeybindingsRegistry {
 	public registerCommandRule(rule: ICommandRule): void {
 		let actualKb = KeybindingsRegistryImpl.bindToCurrentPlatform(rule);
 
+		// here
 		if (actualKb && actualKb.primary) {
-			this.registerDefaultKeybinding(actualKb.primary, rule.id, rule.weight, 0, rule.context);
+			this.registerDefaultKeybinding(actualKb.primary, rule.id, rule.weight, 0, rule.when);
 		}
 
+		// here
 		if (actualKb && Array.isArray(actualKb.secondary)) {
-			actualKb.secondary.forEach((k, i) => this.registerDefaultKeybinding(k, rule.id, rule.weight, -i - 1, rule.context));
+			actualKb.secondary.forEach((k, i) => this.registerDefaultKeybinding(k, rule.id, rule.weight, -i - 1, rule.when));
 		}
 	}
 
@@ -114,9 +116,9 @@ class KeybindingsRegistryImpl implements IKeybindingsRegistry {
 			for (let arg of description.args) {
 				constraints.push(arg.constraint);
 			}
-			handler = function(accesor, args) {
+			handler = function (accesor, ...args: any[]) {
 				validateConstraints(args, constraints);
-				return desc.handler(accesor, args);
+				return desc.handler(accesor, ...args);
 			};
 		}
 
@@ -131,8 +133,8 @@ class KeybindingsRegistryImpl implements IKeybindingsRegistry {
 		return this._commands;
 	}
 
-	private registerDefaultKeybinding(keybinding: number, commandId: string, weight1: number, weight2: number, context: KbExpr): void {
-		if (Platform.isWindows) {
+	private registerDefaultKeybinding(keybinding: number, commandId: string, weight1: number, weight2: number, when: KbExpr): void {
+		if (platform.isWindows) {
 			if (BinaryKeybindings.hasCtrlCmd(keybinding) && !BinaryKeybindings.hasShift(keybinding) && BinaryKeybindings.hasAlt(keybinding) && !BinaryKeybindings.hasWinCtrl(keybinding)) {
 				if (/^[A-Z0-9\[\]\|\;\'\,\.\/\`]$/.test(KeyCode.toString(BinaryKeybindings.extractKeyCode(keybinding)))) {
 					console.warn('Ctrl+Alt+ keybindings should not be used by default under Windows. Offender: ', keybinding, ' for ', commandId);
@@ -142,7 +144,7 @@ class KeybindingsRegistryImpl implements IKeybindingsRegistry {
 		this._keybindings.push({
 			keybinding: keybinding,
 			command: commandId,
-			context: context,
+			when: when,
 			weight1: weight1,
 			weight2: weight2
 		});

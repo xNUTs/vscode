@@ -21,7 +21,6 @@ import {WorkingFilesView} from 'vs/workbench/parts/files/browser/views/workingFi
 import {IStorageService} from 'vs/platform/storage/common/storage';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
-import {StructuredSelection} from 'vs/platform/selection/common/selection';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 
 export class ExplorerViewlet extends Viewlet {
@@ -31,7 +30,7 @@ export class ExplorerViewlet extends Viewlet {
 
 	private explorerView: ExplorerView;
 	private workingFilesView: WorkingFilesView;
-	private lastFocusedView: ExplorerView | WorkingFilesView;
+	private lastFocusedView: ExplorerView | WorkingFilesView | EmptyView;
 	private focusListener: IDisposable;
 
 	private viewletSettings: any;
@@ -65,7 +64,7 @@ export class ExplorerViewlet extends Viewlet {
 		this.addExplorerView();
 
 		// Track focus
-		this.focusListener = this.splitView.onFocus((view: ExplorerView | WorkingFilesView) => {
+		this.focusListener = this.splitView.onFocus((view: ExplorerView | WorkingFilesView | EmptyView) => {
 			this.lastFocusedView = view;
 		});
 
@@ -94,16 +93,6 @@ export class ExplorerViewlet extends Viewlet {
 
 		this.splitView.addView(explorerView);
 		this.views.push(explorerView);
-	}
-
-	/**
-	 * Refresh the contents of the explorer to get up to date data from the disk about the file structure.
-	 *
-	 * @param focus if set to true, the explorer viewer will receive keyboard focus
-	 * @param reveal if set to true, the current active input will be revealed in the explorer
-	 */
-	public refresh(focus: boolean, reveal: boolean, instantProgress?: boolean): TPromise<void> {
-		return TPromise.join(this.views.map((view) => view.refresh(focus, reveal, instantProgress))).then(() => void 0);
 	}
 
 	public getExplorerView(): ExplorerView {
@@ -147,7 +136,7 @@ export class ExplorerViewlet extends Viewlet {
 		return this.workingFilesView.focus();
 	}
 
-	private hasSelectionOrFocus(view: ExplorerView|WorkingFilesView): boolean {
+	private hasSelectionOrFocus(view: ExplorerView | WorkingFilesView | EmptyView): boolean {
 		if (!view) {
 			return false;
 		}
@@ -156,20 +145,21 @@ export class ExplorerViewlet extends Viewlet {
 			return false;
 		}
 
-		const viewer = view.getViewer();
-		if (!viewer) {
-			return false;
+		if (view instanceof ExplorerView || view instanceof WorkingFilesView) {
+			const viewer = view.getViewer();
+			if (!viewer) {
+				return false;
+			}
+
+			return !!viewer.getFocus() || (viewer.getSelection() && viewer.getSelection().length > 0);
+
 		}
 
-		return !!viewer.getFocus() || (viewer.getSelection() && viewer.getSelection().length > 0);
+		return false;
 	}
 
 	public layout(dimension: Dimension): void {
 		this.splitView.layout(dimension.height);
-	}
-
-	public getSelection(): StructuredSelection {
-		return this.explorerView ? this.explorerView.getSelection() : this.workingFilesView.getSelection();
 	}
 
 	public getActionRunner(): IActionRunner {
@@ -178,6 +168,15 @@ export class ExplorerViewlet extends Viewlet {
 		}
 
 		return this.actionRunner;
+	}
+
+	public getOptimalWidth(): number {
+		let additionalMargin = 16;
+		let workingFilesViewWidth = this.getWorkingFilesView().getOptimalWidth();
+		let explorerView = this.getExplorerView();
+		let explorerViewWidth = explorerView ? explorerView.getOptimalWidth() : 0;
+		let optimalWidth = Math.max(workingFilesViewWidth, explorerViewWidth);
+		return optimalWidth + additionalMargin;
 	}
 
 	public shutdown(): void {

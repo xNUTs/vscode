@@ -4,12 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import assert = require('assert');
-import LinkComputer = require('vs/editor/common/modes/linkComputer');
-import EditorCommon = require('vs/editor/common/editorCommon');
-import Modes = require('vs/editor/common/modes');
+import * as assert from 'assert';
+import {ILink} from 'vs/editor/common/modes';
+import {ILinkComputerTarget, computeLinks} from 'vs/editor/common/modes/linkComputer';
 
-class SimpleLinkComputerTarget implements LinkComputer.ILinkComputerTarget {
+class SimpleLinkComputerTarget implements ILinkComputerTarget {
 
 	constructor(private _lines:string[]) {
 		// Intentional Empty
@@ -24,9 +23,9 @@ class SimpleLinkComputerTarget implements LinkComputer.ILinkComputerTarget {
 	}
 }
 
-function computeLinks(lines:string[]): Modes.ILink[] {
+function myComputeLinks(lines:string[]): ILink[] {
 	var target = new SimpleLinkComputerTarget(lines);
-	return LinkComputer.computeLinks(target);
+	return computeLinks(target);
 }
 
 function assertLink(text:string, extractedLink:string): void {
@@ -51,7 +50,7 @@ function assertLink(text:string, extractedLink:string): void {
 		}
 	}
 
-	var r = computeLinks([text]);
+	var r = myComputeLinks([text]);
 	assert.deepEqual(r, [{
 		range: {
 			startLineNumber: 1,
@@ -66,7 +65,7 @@ function assertLink(text:string, extractedLink:string): void {
 suite('Editor Modes - Link Computer', () => {
 
 	test('Null model',() => {
-		var r = LinkComputer.computeLinks(null);
+		var r = computeLinks(null);
 		assert.deepEqual(r, []);
 	});
 
@@ -128,20 +127,40 @@ suite('Editor Modes - Link Computer', () => {
 			'     http://mylink.com      '
 		);
 		assertLink(
-			'// Click here to learn more. http://go.microsoft.com/fwlink/?LinkID=513275&clcid=0x409',
-			'                             http://go.microsoft.com/fwlink/?LinkID=513275&clcid=0x409'
+			'// Click here to learn more. https://go.microsoft.com/fwlink/?LinkID=513275&clcid=0x409',
+			'                             https://go.microsoft.com/fwlink/?LinkID=513275&clcid=0x409'
+		);
+		assertLink(
+			'// Click here to learn more. https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx',
+			'                             https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx'
 		);
 		assertLink(
 			'// https://github.com/projectkudu/kudu/blob/master/Kudu.Core/Scripts/selectNodeVersion.js',
 			'   https://github.com/projectkudu/kudu/blob/master/Kudu.Core/Scripts/selectNodeVersion.js'
 		);
 		assertLink(
-			'<!-- !!! Do not remove !!!   WebContentRef(link:http://go.microsoft.com/fwlink/?LinkId=166007, area:Admin, updated:2015, nextUpdate:2016, tags:SqlServer)   !!! Do not remove !!! -->',
-			'                                                http://go.microsoft.com/fwlink/?LinkId=166007                                                                                        '
+			'<!-- !!! Do not remove !!!   WebContentRef(link:https://go.microsoft.com/fwlink/?LinkId=166007, area:Admin, updated:2015, nextUpdate:2016, tags:SqlServer)   !!! Do not remove !!! -->',
+			'                                                https://go.microsoft.com/fwlink/?LinkId=166007                                                                                        '
 		);
 		assertLink(
-			'For instructions, see http://go.microsoft.com/fwlink/?LinkId=166007.</value>',
-			'                      http://go.microsoft.com/fwlink/?LinkId=166007         '
+			'For instructions, see https://go.microsoft.com/fwlink/?LinkId=166007.</value>',
+			'                      https://go.microsoft.com/fwlink/?LinkId=166007         '
+		);
+		assertLink(
+			'For instructions, see https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx.</value>',
+			'                      https://msdn.microsoft.com/en-us/library/windows/desktop/aa365247(v=vs.85).aspx         '
+		);
+		assertLink(
+			'x = "https://en.wikipedia.org/wiki/Zürich";',
+			'     https://en.wikipedia.org/wiki/Zürich  '
+		);
+		assertLink(
+			'請參閱 http://go.microsoft.com/fwlink/?LinkId=761051。',
+			'    http://go.microsoft.com/fwlink/?LinkId=761051 '
+		);
+		assertLink(
+			'（請參閱 http://go.microsoft.com/fwlink/?LinkId=761051）',
+			'     http://go.microsoft.com/fwlink/?LinkId=761051 '
 		);
 
 		// foo bar (see http://www.w3schools.com/tags/att_iframe_sandbox.asp)

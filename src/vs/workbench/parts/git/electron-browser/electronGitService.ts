@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Promise, TPromise } from 'vs/base/common/winjs.base';
-import { RawServiceState } from 'vs/workbench/parts/git/common/git';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { IRawGitService, RawServiceState } from 'vs/workbench/parts/git/common/git';
 import { NoOpGitService } from 'vs/workbench/parts/git/common/noopGitService';
 import { GitService } from 'vs/workbench/parts/git/browser/gitServices';
 import { ILifecycleService } from 'vs/platform/lifecycle/common/lifecycle';
@@ -15,32 +15,57 @@ import { IEventService } from 'vs/platform/event/common/event';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IMessageService } from 'vs/platform/message/common/message';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
-import { Client } from 'vs/base/node/service.cp';
-import { RawGitService, DelayedRawGitService } from 'vs/workbench/parts/git/node/rawGitService';
+import { getDelayedChannel } from 'vs/base/parts/ipc/common/ipc';
+import { Client } from 'vs/base/parts/ipc/node/ipc.cp';
+import { GitChannelClient, UnavailableGitChannel } from 'vs/workbench/parts/git/common/gitIpc';
+import { RawGitService } from 'vs/workbench/parts/git/node/rawGitService';
 import URI from 'vs/base/common/uri';
 import { spawn, exec } from 'child_process';
 import { join } from 'path';
 import { remote } from 'electron';
+import { IStorageService } from 'vs/platform/storage/common/storage';
 
-function findSpecificGit(gitPath: string): Promise {
-	return new Promise((c, e) => {
-		var child = spawn(gitPath, ['--version']);
+interface IGit {
+	path: string;
+	version: string;
+}
+
+function parseVersion(raw: string): string {
+	return raw.replace(/^git version /, '');
+}
+
+function findSpecificGit(path: string): TPromise<IGit> {
+	return new TPromise<IGit>((c, e) => {
+		const buffers: Buffer[] = [];
+		const child = spawn(path, ['--version']);
+		child.stdout.on('data', b => buffers.push(b));
 		child.on('error', e);
-		child.on('exit', (code: number) => code ? e(new Error('Not found')) : c(gitPath));
+		child.on('exit', code => code ? e(new Error('Not found')) : c({ path, version: parseVersion(Buffer.concat(buffers).toString('utf8').trim()) }));
 	});
 }
 
-function findGitDarwin(): Promise {
-	return new Promise((c, e) => {
+function findGitDarwin(): TPromise<IGit> {
+	return new TPromise<IGit>((c, e) => {
 		exec('which git', (err, gitPathBuffer) => {
 			if (err) {
 				return e('git not found');
 			}
 
-			let gitPath = gitPathBuffer.toString().replace(/^\s+|\s+$/g, '');
+			const path = gitPathBuffer.toString().replace(/^\s+|\s+$/g, '');
 
-			if (gitPath !== '/usr/bin/git')	{
-				return c(gitPath);
+			function getVersion(path: string) {
+				// make sure git executes
+				exec('git --version', (err, stdout) => {
+					if (err) {
+						return e('git not found');
+					}
+
+					return c({ path, version: parseVersion(stdout.toString('utf8').trim()) });
+				});
+			}
+
+			if (path !== '/usr/bin/git')	{
+				return getVersion(path);
 			}
 
 			// must check if XCode is installed
@@ -52,36 +77,29 @@ function findGitDarwin(): Promise {
 					return e('git not found');
 				}
 
-				// make sure git executes
-				exec('git --version', err => {
-					if (err) {
-						return e('git not found');
-					}
-
-					return c(gitPath);
-				});
+				getVersion(path);
 			});
 		});
 	});
 }
 
-function findSystemGitWin32(base: string): Promise {
+function findSystemGitWin32(base: string): TPromise<IGit> {
 	if (!base) {
-		return Promise.wrapError('Not found');
+		return TPromise.wrapError('Not found');
 	}
 
 	return findSpecificGit(join(base, 'Git', 'cmd', 'git.exe'));
 }
 
-function findGitWin32(): Promise {
+function findGitWin32(): TPromise<IGit> {
 	return findSystemGitWin32(process.env['ProgramW6432'])
 		.then(null, () => findSystemGitWin32(process.env['ProgramFiles(x86)']))
 		.then(null, () => findSystemGitWin32(process.env['ProgramFiles']))
 		.then(null, () => findSpecificGit('git'));
 }
 
-function findGit(hint: string): Promise {
-	var first = hint ? findSpecificGit(hint) : Promise.wrapError(null);
+function findGit(hint: string): TPromise<IGit> {
+	var first = hint ? findSpecificGit(hint) : TPromise.wrapError(null);
 
 	return first.then(null, () => {
 		switch (process.platform) {
@@ -96,6 +114,10 @@ class UnavailableRawGitService extends RawGitService {
 	constructor() {
 		super(null);
 	}
+
+	serviceState(): TPromise<RawServiceState> {
+		return TPromise.as(RawServiceState.GitNotFound);
+	}
 }
 
 class DisabledRawGitService extends RawGitService {
@@ -103,44 +125,8 @@ class DisabledRawGitService extends RawGitService {
 		super(null);
 	}
 
-	public serviceState(): TPromise<RawServiceState> {
-		return TPromise.as<RawServiceState>(RawServiceState.Disabled);
-	}
-}
-
-export function createNativeRawGitService(workspaceRoot: string, gitPath: string, defaultEncoding: string): Promise {
-	return findGit(gitPath).then(gitPath => {
-		const client = new Client(
-			URI.parse(require.toUrl('bootstrap')).fsPath,
-			{
-				serverName: 'Git',
-				timeout: 1000 * 60,
-				args: [gitPath, workspaceRoot, defaultEncoding, remote.process.execPath],
-				env: {
-					ATOM_SHELL_INTERNAL_RUN_AS_NODE: 1,
-					AMD_ENTRYPOINT: 'vs/workbench/parts/git/electron-browser/gitApp'
-				}
-			}
-		);
-
-		return client.getService('GitService', RawGitService);
-	}, () => new UnavailableRawGitService());
-}
-
-class ElectronRawGitService extends DelayedRawGitService {
-	constructor(workspaceRoot: string, @IConfigurationService configurationService: IConfigurationService) {
-		super(configurationService.loadConfiguration().then(conf => {
-			var enabled = conf.git ? conf.git.enabled : true;
-
-			if (!enabled) {
-				return TPromise.as(new DisabledRawGitService());
-			}
-
-			var gitPath = (conf.git && conf.git.path) || null;
-			var encoding = (conf.files && conf.files.encoding) || 'utf8';
-
-			return createNativeRawGitService(workspaceRoot, gitPath, encoding);
-		}));
+	serviceState(): TPromise<RawServiceState> {
+		return TPromise.as(RawServiceState.Disabled);
 	}
 }
 
@@ -152,13 +138,49 @@ export class ElectronGitService extends GitService {
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
 		@IOutputService outputService: IOutputService,
 		@IWorkspaceContextService contextService: IWorkspaceContextService,
-		@ILifecycleService lifecycleService: ILifecycleService
+		@ILifecycleService lifecycleService: ILifecycleService,
+		@IStorageService storageService: IStorageService,
+		@IConfigurationService configurationService: IConfigurationService
 	) {
-		let workspace = contextService.getWorkspace();
-		let raw = !workspace
-			? new NoOpGitService()
-			: instantiationService.createInstance(ElectronRawGitService, workspace.resource.fsPath);
+		const conf = configurationService.getConfiguration<any>();
+		const enabled = conf.git ? conf.git.enabled : true;
+		const workspace = contextService.getWorkspace();
 
-		super(raw, instantiationService, eventService, messageService, editorService, outputService, contextService, lifecycleService);
+		let raw: IRawGitService;
+
+		if (!enabled) {
+			raw = new DisabledRawGitService();
+		} else if (!workspace) {
+			raw = new NoOpGitService();
+		} else {
+			const gitPath = (conf.git && conf.git.path) || null;
+			const encoding = (conf.files && conf.files.encoding) || 'utf8';
+			const workspaceRoot = workspace.resource.fsPath;
+
+			const promise = findGit(gitPath)
+				.then(({ path, version }) => {
+					const client = new Client(
+						URI.parse(require.toUrl('bootstrap')).fsPath,
+						{
+							serverName: 'Git',
+							timeout: 1000 * 60,
+							args: [path, workspaceRoot, encoding, remote.process.execPath, version],
+							env: {
+								ATOM_SHELL_INTERNAL_RUN_AS_NODE: 1,
+								PIPE_LOGGING: 'true',
+								AMD_ENTRYPOINT: 'vs/workbench/parts/git/node/gitApp'
+							}
+						}
+					);
+
+					return client.getChannel('git');
+				})
+				.then(null, () => new UnavailableGitChannel());
+
+			const channel = getDelayedChannel(promise);
+			raw = new GitChannelClient(channel);
+		}
+
+		super(raw, instantiationService, eventService, messageService, editorService, outputService, contextService, lifecycleService, storageService);
 	}
 }

@@ -69,7 +69,6 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 	private _onShow: Emitter<void>;
 	private _onHide: Emitter<void>;
 
-	private instantiationService: IInstantiationService;
 	private quickOpenWidget: QuickOpenWidget;
 	private pickOpenWidget: QuickOpenWidget;
 	private layoutDimensions: Dimension;
@@ -87,14 +86,15 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 	private visibilityChangeTimeoutHandle: number;
 
 	constructor(
-		private eventService: IEventService,
-		private storageService: IStorageService,
-		private editorService: IWorkbenchEditorService,
-		private viewletService: IViewletService,
-		private messageService: IMessageService,
-		private telemetryService: ITelemetryService,
-		private contextService: IWorkspaceContextService,
-		keybindingService: IKeybindingService
+		@IEventService private eventService: IEventService,
+		@IStorageService private storageService: IStorageService,
+		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
+		@IViewletService private viewletService: IViewletService,
+		@IMessageService private messageService: IMessageService,
+		@ITelemetryService private telemetryService: ITelemetryService,
+		@IWorkspaceContextService private contextService: IWorkspaceContextService,
+		@IKeybindingService keybindingService: IKeybindingService,
+		@IInstantiationService private instantiationService: IInstantiationService
 	) {
 		super(ID);
 
@@ -115,10 +115,6 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 
 	public get onHide(): Event<void> {
 		return this._onHide.event;
-	}
-
-	public setInstantiationService(service: IInstantiationService): void {
-		this.instantiationService = service;
 	}
 
 	public getEditorHistoryModel(): EditorHistoryModel {
@@ -352,7 +348,7 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 						return new PickOpenItem(entry.label, entry.description, entry.height, entry.render.bind(entry), () => progress(e));
 					}
 
-					return new PickOpenEntry(entry.label, entry.description, entry.detail, () => progress(e));
+					return new PickOpenEntry(entry.label, entry.description, entry.detail, () => progress(e), entry.separator && entry.separator.border, entry.separator && entry.separator.label);
 				});
 
 				if (picks.length === 0) {
@@ -624,12 +620,19 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 	private onType(value: string): void {
 		this.previousValue = value;
 
+		// look for a handler
+		const registry = Registry.as<IQuickOpenRegistry>(Extensions.Quickopen);
+		const handlerDescriptor = registry.getQuickOpenHandler(value);
+		const instantProgress = handlerDescriptor && handlerDescriptor.instantProgress;
+
 		// Use a generated token to avoid race conditions from long running promises
 		let currentResultToken = uuid.generateUuid();
 		this.currentResultToken = currentResultToken;
 
 		// Reset Progress
-		this.quickOpenWidget.getProgressBar().stop().getContainer().hide();
+		if (!instantProgress) {
+			this.quickOpenWidget.getProgressBar().stop().getContainer().hide();
+		}
 
 		// Reset Extra Class
 		this.quickOpenWidget.setExtraClass(null);
@@ -646,9 +649,6 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 		let resultPromise: TPromise<void>;
 		let resultPromiseDone = false;
 
-		// look for a handler
-		let registry = (<IQuickOpenRegistry>Registry.as(Extensions.Quickopen));
-		let handlerDescriptor = registry.getQuickOpenHandler(value);
 		if (handlerDescriptor) {
 			resultPromise = this.handleSpecificHandler(handlerDescriptor, value, currentResultToken);
 		}
@@ -663,7 +663,7 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 		this.previousActiveHandlerDescriptor = handlerDescriptor;
 
 		// Progress if task takes a long time
-		TPromise.timeout(handlerDescriptor && handlerDescriptor.instantProgress ? 0 : 800).then(() => {
+		TPromise.timeout(instantProgress ? 0 : 800).then(() => {
 			if (!resultPromiseDone && currentResultToken === this.currentResultToken) {
 				this.quickOpenWidget.getProgressBar().infinite().getContainer().show();
 			}
@@ -897,7 +897,7 @@ export class QuickOpenController extends WorkbenchComponent implements IQuickOpe
 	}
 }
 
-class PlaceholderQuickOpenEntry extends QuickOpenEntry {
+class PlaceholderQuickOpenEntry extends QuickOpenEntryGroup {
 	private placeHolderLabel: string;
 
 	constructor(placeHolderLabel: string) {
@@ -916,7 +916,7 @@ class PickOpenEntry extends PlaceholderQuickOpenEntry {
 	private description: string;
 	private detail: string;
 
-	constructor(label: string, description?: string, detail?: string, private onPreview?: () => void) {
+	constructor(label: string, description?: string, detail?: string, private onPreview?: () => void, private hasSeparator?: boolean, private separatorLabel?: string) {
 		super(label);
 
 		this.description = description;
@@ -933,6 +933,14 @@ class PickOpenEntry extends PlaceholderQuickOpenEntry {
 
 	public getDetail(): string {
 		return this.detail;
+	}
+
+	public showBorder(): boolean {
+		return this.hasSeparator;
+	}
+
+	public getGroupLabel(): string {
+		return this.separatorLabel;
 	}
 
 	public run(mode: Mode, context: IContext): boolean {

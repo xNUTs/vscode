@@ -102,8 +102,14 @@ export class Adapter {
 					description: nls.localize('debugRequest', "Request type of configuration. Can be \"launch\" or \"attach\"."),
 				};
 				properties.preLaunchTask = {
-					type: 'string',
+					type: ['string', 'null'],
+					default: null,
 					description: nls.localize('debugPrelaunchTask', "Task to run before debug session starts.")
+				};
+				properties.internalConsoleOptions = {
+					enum: ['neverOpen', 'openOnSessionStart', 'openOnFirstSessionStart'],
+					default: 'openOnFirstSessionStart',
+					description: nls.localize('internalConsoleOptions', "Controls behavior of the internal debug console.")
 				};
 				this.warnRelativePaths(properties.outDir);
 				this.warnRelativePaths(properties.program);
@@ -119,7 +125,7 @@ export class Adapter {
 
 	private warnRelativePaths(attribute: any): void {
 		if (attribute) {
-			attribute.pattern = '^\\${.*}.*|^((\\/|[a-zA-Z]:\\\\)[^\\(\\)<>\\\'\\"\\[\\]]+)';
+			attribute.pattern = '^\\${.*}.*|' + paths.isAbsoluteRegex.source;
 			attribute.errorMessage = nls.localize('relativePathsNotConverted', "Relative paths will no longer be automatically converted to absolute ones. Consider using ${workspaceRoot} as a prefix.");
 		}
 	}

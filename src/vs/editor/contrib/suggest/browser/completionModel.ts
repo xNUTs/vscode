@@ -5,152 +5,135 @@
 
 'use strict';
 
-import { TPromise } from 'vs/base/common/winjs.base';
-import { assign } from 'vs/base/common/objects';
-import * as EditorCommon from 'vs/editor/common/editorCommon';
-import { ISuggestSupport, ISuggestResult, ISuggestion, ISuggestionFilter } from 'vs/editor/common/modes';
-import { DefaultFilter, IMatch } from 'vs/editor/common/modes/modesFilters';
-import { ISuggestResult2 } from '../common/suggest';
+import {isFalsyOrEmpty} from 'vs/base/common/arrays';
+import {assign} from 'vs/base/common/objects';
 import URI from 'vs/base/common/uri';
-import { isFalsyOrEmpty } from 'vs/base/common/arrays';
-
-function completionGroupCompare(one: CompletionGroup, other: CompletionGroup): number {
-	return one.index - other.index;
-}
-
-function completionItemCompare(item: CompletionItem, otherItem: CompletionItem): number {
-	const suggestion = item.suggestion;
-	const otherSuggestion = otherItem.suggestion;
-
-	if (typeof suggestion.sortText === 'string' && typeof otherSuggestion.sortText === 'string') {
-		const one = suggestion.sortText.toLowerCase();
-		const other = otherSuggestion.sortText.toLowerCase();
-
-		if (one < other) {
-			return -1;
-		} else if (one > other) {
-			return 1;
-		}
-	}
-
-	return suggestion.label.toLowerCase() < otherSuggestion.label.toLowerCase() ? -1 : 1;
-}
+import {TPromise} from 'vs/base/common/winjs.base';
+import {IPosition} from 'vs/editor/common/editorCommon';
+import {IFilter, IMatch, fuzzyContiguousFilter} from 'vs/base/common/filters';
+import {ISuggestResult, ISuggestSupport, ISuggestion} from 'vs/editor/common/modes';
+import {ISuggestResult2} from '../common/suggest';
 
 export class CompletionItem {
 
-	private static _idPool: number = 0;
-
-	id: string;
 	suggestion: ISuggestion;
 	highlights: IMatch[];
-	support: ISuggestSupport;
 	container: ISuggestResult;
+	filter: IFilter;
 
-	constructor(public group: CompletionGroup, suggestion: ISuggestion, container: ISuggestResult2) {
-		this.id = String(CompletionItem._idPool++);
-		this.support = container.support;
+	private _support: ISuggestSupport;
+
+	constructor(suggestion: ISuggestion, container: ISuggestResult2) {
+		this._support = container.support;
 		this.suggestion = suggestion;
 		this.container = container;
+		this.filter = container.support && container.support.filter || fuzzyContiguousFilter;
 	}
 
-	resolveDetails(resource: URI, position: EditorCommon.IPosition): TPromise<ISuggestion> {
-		if (!this.support || typeof this.support.getSuggestionDetails !== 'function') {
+	resolveDetails(resource: URI, position: IPosition): TPromise<ISuggestion> {
+		if (!this._support || typeof this._support.getSuggestionDetails !== 'function') {
 			return TPromise.as(this.suggestion);
 		}
 
-		return this.support.getSuggestionDetails(resource, position, this.suggestion);
+		return this._support.getSuggestionDetails(resource, position, this.suggestion);
 	}
 
 	updateDetails(value: ISuggestion): void {
 		this.suggestion = assign(this.suggestion, value);
 	}
-}
 
-export class CompletionGroup {
+	static compare(item: CompletionItem, otherItem: CompletionItem): number {
+		const suggestion = item.suggestion;
+		const otherSuggestion = otherItem.suggestion;
 
-	private _items: CompletionItem[];
-	private cache: CompletionItem[];
-	private cacheCurrentWord: string;
-	filter: ISuggestionFilter;
+		if (typeof suggestion.sortText === 'string' && typeof otherSuggestion.sortText === 'string') {
+			const one = suggestion.sortText.toLowerCase();
+			const other = otherSuggestion.sortText.toLowerCase();
 
-	constructor(public model: CompletionModel, public index: number, raw: ISuggestResult2[]) {
-
-		this._items = raw.reduce<CompletionItem[]>((items, result) => {
-			return items.concat(
-				result.suggestions
-					.map(suggestion => new CompletionItem(this, suggestion, result))
-			);
-		}, []).sort(completionItemCompare);
-
-		this.filter = DefaultFilter;
-
-		if (this._items.length > 0) {
-			const [first] = this._items;
-
-			if (first.support) {
-				this.filter = first.support.getFilter && first.support.getFilter() || this.filter;
+			if (one < other) {
+				return -1;
+			} else if (one > other) {
+				return 1;
 			}
 		}
+
+		return suggestion.label.toLowerCase() < otherSuggestion.label.toLowerCase() ? -1 : 1;
 	}
+}
 
-	getItems(currentWord: string): CompletionItem[] {
-		if (currentWord === this.cacheCurrentWord) {
-			return this.cache;
-		}
-
-		let set: CompletionItem[];
-
-		// try to narrow down when possible, instead of always filtering everything
-		if (this.cacheCurrentWord && currentWord.substr(0, this.cacheCurrentWord.length) === this.cacheCurrentWord) {
-			set = this.cache;
-		} else {
-			set = this._items;
-		}
-
-		const result = set.filter(item => {
-			item.highlights = this.filter(currentWord, item.suggestion);
-			return !isFalsyOrEmpty(item.highlights);
-		});
-
-		// let's only cache stuff that actually has results
-		if (result.length > 0) {
-			this.cacheCurrentWord = currentWord;
-			this.cache = result;
-		}
-
-		return result;
-	}
+export class LineContext {
+	leadingLineContent: string;
+	characterCountDelta: number;
 }
 
 export class CompletionModel {
 
-	private groups: CompletionGroup[];
-	private cache: CompletionItem[];
-	private cacheCurrentWord: string;
+	private _lineContext: LineContext;
+	private _items: CompletionItem[] = [];
+	private _filteredItems: CompletionItem[] = undefined;
 
-	constructor(public raw: ISuggestResult2[][], public currentWord: string) {
+	constructor(public raw: ISuggestResult2[], leadingLineContent:string) {
+		this._lineContext = { leadingLineContent, characterCountDelta: 0 };
+		for (let container of raw) {
+			for (let suggestion of container.suggestions) {
+				this._items.push(new CompletionItem(suggestion, container));
+			}
+		}
+		this._items.sort(CompletionItem.compare);
+	}
 
-		this.groups = raw
-			.filter(s => !!s)
-			.map((suggestResults, index) => {
-				return new CompletionGroup(this, index, suggestResults);
-			})
-			.sort(completionGroupCompare);
+	get lineContext(): LineContext {
+		return this._lineContext;
+	}
+
+	set lineContext(value: LineContext) {
+		if (this._lineContext !== value) {
+			this._filteredItems = undefined;
+			this._lineContext = value;
+		}
 	}
 
 	get items(): CompletionItem[] {
-		if (this.cacheCurrentWord === this.currentWord) {
-			return this.cache;
+		if (!this._filteredItems) {
+			this._filter();
 		}
+		return this._filteredItems;
+	}
 
-		const result = this.groups.reduce((r, groups) => r.concat(groups.getItems(this.currentWord)), []);
 
-		// let's only cache stuff that actually has results
-		if (result.length > 0) {
-			this.cache = result;
-			this.cacheCurrentWord = this.currentWord;
+	private _filter(): void {
+		this._filteredItems = [];
+		const {leadingLineContent, characterCountDelta} = this._lineContext;
+		for (let item of this._items) {
+
+			let {overwriteBefore} = item.suggestion;
+			if (typeof overwriteBefore !== 'number') {
+				overwriteBefore = item.container.currentWord.length;
+			}
+
+			const start = leadingLineContent.length - (overwriteBefore + characterCountDelta);
+			const word = leadingLineContent.substr(start);
+
+			const {filter, suggestion} = item;
+			let match = false;
+
+			// compute highlights based on 'label'
+			item.highlights = filter(word, suggestion.label);
+			match = item.highlights !== null;
+
+			// no match on label -> check on codeSnippet
+			if (!match && suggestion.codeSnippet !== suggestion.label) {
+				match = !isFalsyOrEmpty((filter(word, suggestion.codeSnippet.replace(/{{.+?}}/g, '')))); // filters {{text}}-snippet syntax
+			}
+
+			// no match on label nor codeSnippet -> check on filterText
+			if(!match && typeof suggestion.filterText === 'string') {
+				match = !isFalsyOrEmpty(filter(word, suggestion.filterText));
+			}
+
+			if (match) {
+				this._filteredItems.push(item);
+			}
 		}
-
-		return result;
 	}
 }

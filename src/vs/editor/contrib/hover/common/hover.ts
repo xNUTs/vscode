@@ -5,15 +5,12 @@
 
 'use strict';
 
-import {IExtraInfoSupport, IComputeExtraInfoResult} from 'vs/editor/common/modes';
-import LanguageFeatureRegistry from 'vs/editor/common/modes/languageFeatureRegistry';
-import {TPromise} from 'vs/base/common/winjs.base';
 import {coalesce} from 'vs/base/common/arrays';
 import {onUnexpectedError} from 'vs/base/common/errors';
-import {IPosition, IModel} from 'vs/editor/common/editorCommon';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {IModel, IPosition} from 'vs/editor/common/editorCommon';
 import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
-
-export const ExtraInfoRegistry = new LanguageFeatureRegistry<IExtraInfoSupport>('extraInfoSupport');
+import {IComputeExtraInfoResult, ExtraInfoRegistry} from 'vs/editor/common/modes';
 
 export function getExtraInfoAtPosition(model: IModel, position: IPosition): TPromise<IComputeExtraInfoResult[]> {
 

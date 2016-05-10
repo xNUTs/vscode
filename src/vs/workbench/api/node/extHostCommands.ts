@@ -20,15 +20,15 @@ interface CommandHandler {
 	description: ICommandHandlerDescription;
 }
 
-@Remotable.PluginHostContext('ExtHostCommands')
+@Remotable.ExtHostContext('ExtHostCommands')
 export class ExtHostCommands {
 
 	private _commands: { [n: string]: CommandHandler } = Object.create(null);
 	private _proxy: MainThreadCommands;
-	private _pluginHostEditors: ExtHostEditors;
+	private _extHostEditors: ExtHostEditors;
 
 	constructor(@IThreadService threadService: IThreadService) {
-		this._pluginHostEditors = threadService.getRemotable(ExtHostEditors);
+		this._extHostEditors = threadService.getRemotable(ExtHostEditors);
 		this._proxy = threadService.getRemotable(MainThreadCommands);
 	}
 
@@ -93,9 +93,9 @@ export class ExtHostCommands {
 			let result = callback.apply(thisArg, args);
 			return Promise.resolve(result);
 		} catch (err) {
+			// console.log(err);
 			// try {
 			// 	console.log(toErrorMessage(err));
-			// 	console.log(err);
 			// } catch (err) {
 			// 	//
 			// }
@@ -145,7 +145,7 @@ export class MainThreadCommands {
 				return this._proxy.$executeContributedCommand(id, ...args);
 			},
 			weight: undefined,
-			context: undefined,
+			when: undefined,
 			win: undefined,
 			mac: undefined,
 			linux: undefined,
@@ -157,7 +157,7 @@ export class MainThreadCommands {
 	}
 
 	$executeCommand<T>(id: string, args: any[]): Thenable<T> {
-		return this._keybindingService.executeCommand(id, args);
+		return this._keybindingService.executeCommand(id, ...args);
 	}
 
 	$getCommands(): Thenable<string[]> {
@@ -190,7 +190,7 @@ KeybindingsRegistry.registerCommandDesc({
 			console.log(all.join('\n'));
 		});
 	},
-	context: undefined,
+	when: undefined,
 	weight: KeybindingsRegistry.WEIGHT.builtinExtension(0),
 	primary: undefined
 });

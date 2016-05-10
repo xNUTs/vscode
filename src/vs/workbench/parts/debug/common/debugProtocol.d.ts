@@ -49,34 +49,40 @@ declare module DebugProtocol {
 
 	/** Event message for "initialized" event type.
 		This event indicates that the debug adapter is ready to accept configuration requests (e.g. SetBreakpointsRequest, SetExceptionBreakpointsRequest).
-		A debug adapter is expected to send this event when it is ready to accept configuration requests.
+		A debug adapter is expected to send this event when it is ready to accept configuration requests (but not before the InitializeRequest has finished).
 		The sequence of events/requests is as follows:
-		- adapters sends InitializedEvent (at any time)
+		- adapters sends InitializedEvent (after the InitializeRequest has returned)
 		- frontend sends zero or more SetBreakpointsRequest
-		- frontend sends one SetExceptionBreakpointsRequest (in the future 'zero or one')
-		- frontend sends other configuration requests that are added in the future
-		- frontend sends one ConfigurationDoneRequest
+		- frontend sends one SetFunctionBreakpointsRequest
+		- frontend sends a SetExceptionBreakpointsRequest if one or more exceptionBreakpointFilters have been defined (or if supportsConfigurationDoneRequest is not defined or false)
+		- frontend sends other future configuration requests
+		- frontend sends one ConfigurationDoneRequest to indicate the end of the configuration
 	*/
 	export interface InitializedEvent extends Event {
 	}
 
 	/** Event message for "stopped" event type.
-		The event indicates that the execution of the debugee has stopped due to a break condition.
-		This can be caused by by a break point previously set, a stepping action has completed or by executing a debugger statement.
+		The event indicates that the execution of the debuggee has stopped due to some condition.
+		This can be caused by a break point previously set, a stepping action has completed, by executing a debugger statement etc.
 	*/
 	export interface StoppedEvent extends Event {
 		body: {
-			/** The reason for the event (such as: 'step', 'breakpoint', 'exception', 'pause') */
+			/** The reason for the event (such as: 'step', 'breakpoint', 'exception', 'pause'). This string is shown in the UI. */
 			reason: string;
 			/** The thread which was stopped. */
 			threadId?: number;
-			/** Additional information. E.g. if reason is 'exception', text contains the exception name. */
+			/** Additional information. E.g. if reason is 'exception', text contains the exception name. This string is shown in the UI. */
 			text?: string;
+			/** If allThreadsStopped is true, a debug adapter can announce that all threads have stopped.
+			 *  The client should use this information to enable that all threads can be expanded to access their stacktraces.
+			 *  If the attribute is missing or false, only the thread with the given threadId can be expanded.
+			 **/
+			allThreadsStopped?: boolean;
 		};
 	}
 
 	/** Event message for "exited" event type.
-		The event indicates that the debugee has exited.
+		The event indicates that the debuggee has exited.
 	*/
 	export interface ExitedEvent extends Event {
 		body: {
@@ -89,6 +95,10 @@ declare module DebugProtocol {
 		The event indicates that debugging of the debuggee has terminated.
 	*/
 	export interface TerminatedEvent extends Event {
+		body?: {
+			/** A debug adapter may set 'restart' to true to request that the front end restarts the session. */
+			restart?: boolean;
+		}
 	}
 
 	/** Event message for "thread" event type.
@@ -149,8 +159,6 @@ declare module DebugProtocol {
 	export interface InitializeRequestArguments {
 		/** The ID of the debugger adapter. Used to select or verify debugger adapter. */
 		adapterID: string;
-		/** The locale to use for all user visible information returned by this debug adapter. If no locale is specified, the default locale of the OS will be used. */
-		locale?: string;
 		/** If true all line numbers are 1-based (default). */
 		linesStartAt1?: boolean;
 		/** If true all column numbers are 1-based (default). */
@@ -185,7 +193,8 @@ declare module DebugProtocol {
 	}
 	/** Arguments for "launch" request. */
 	export interface LaunchRequestArguments {
-		/* The launch request has no standardized attributes. */
+		/* If noDebug is true the launch request should launch the program without enabling debugging. */
+		noDebug?: boolean;
 	}
 	/** Response to "launch" request. This is just an acknowledgement, so no body field is required. */
 	export interface LaunchResponse extends Response {
@@ -236,10 +245,12 @@ declare module DebugProtocol {
 	/** Response to "setBreakpoints" request.
 		Returned is information about each breakpoint created by this request.
 		This includes the actual code location and whether the breakpoint could be verified.
+		The breakpoints returned are in the same order as the elements of the 'breakpoints'
+		(or the deprecated 'lines') in the SetBreakpointsArguments.
 	*/
 	export interface SetBreakpointsResponse extends Response {
 		body: {
-			/** Information about the breakpoints. The array elements correspond to the elements of the 'breakpoints' (or the deprecated 'lines) array. */
+			/** Information about the breakpoints. The array elements are in the same order as the elements of the 'breakpoints' (or the deprecated 'lines') in the SetBreakpointsArguments. */
 			breakpoints: Breakpoint[];
 		};
 	}
@@ -371,6 +382,8 @@ declare module DebugProtocol {
 	export interface StackTraceArguments {
 		/** Retrieve the stacktrace for this thread. */
 		threadId: number;
+		/** The index of the first frame to return; if omitted frames start at 0. */
+		startFrame?: number;
 		/** The maximum number of frames to return. If levels is not specified or 0, all frames are returned. */
 		levels?: number;
 	}
@@ -380,6 +393,8 @@ declare module DebugProtocol {
 			/** The frames of the stackframe. If the array has length zero, there are no stackframes available.
 				This means that there is no location information available. */
 			stackFrames: StackFrame[];
+			/** The total number of frames available. */
+			totalFrames?: number;
 		};
 	}
 
@@ -491,14 +506,18 @@ declare module DebugProtocol {
 		supportsConditionalBreakpoints?: boolean;
 		/** The debug adapter supports a (side effect free) evaluate request for data hovers. */
 		supportsEvaluateForHovers?: boolean;
-
 		/** Available filters for the setExceptionBreakpoints request. */
-		exceptionBreakpointFilters?: [
-			{
-				filter: string,
-				label: string
-			}
-		]
+		exceptionBreakpointFilters?: ExceptionBreakpointsFilter[];
+	}
+
+	/** An ExceptionBreakpointsFilter is shown in the UI as an option for configuring how exceptions are dealt with. */
+	export interface ExceptionBreakpointsFilter {
+		/** The internal ID of the filter. This value is passed to the setExceptionBreakpoints request. */
+		filter: string,
+		/** The name of the filter. This will be shown in the UI. */
+		label: string,
+		/** Initial value of the filter. If not specified a value 'false' is assumed. */
+		default?: boolean
 	}
 
 	/** A structured message object. Used to return errors from requests. */
@@ -514,6 +533,10 @@ declare module DebugProtocol {
 		sendTelemetry?: boolean;
 		/** if true show user */
 		showUser?: boolean;
+		/** An optional url where additional information about this message can be found. */
+		url?: string;
+		/** An optional label that is presented to the user as the UI for opening the url. */
+		urlLabel?: string;
 	}
 
 	/** A Thread */

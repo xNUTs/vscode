@@ -7,8 +7,6 @@
 
 import {ILanguageDef} from './types';
 
-import 'vs/languages/json/common/json.contribution';
-
 this.MonacoEditorLanguages = this.MonacoEditorLanguages || [];
 let MonacoEditorLanguages: ILanguageDef[] = this.MonacoEditorLanguages;
 
@@ -71,7 +69,7 @@ MonacoEditorLanguages.push({
 });
 MonacoEditorLanguages.push({
 	id: 'jade',
-	extensions: [ '.jade' ],
+	extensions: [ '.jade', '.pug' ],
 	aliases: [ 'Jade', 'jade' ],
 	defModule: 'vs/editor/standalone-languages/jade'
 });

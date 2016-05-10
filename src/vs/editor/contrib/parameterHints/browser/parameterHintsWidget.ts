@@ -6,38 +6,38 @@
 'use strict';
 
 import 'vs/css!./parameterHints';
+import nls = require('vs/nls');
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import {TPromise} from 'vs/base/common/winjs.base';
-import lifecycle = require('vs/base/common/lifecycle');
-import Builder = require('vs/base/browser/builder');
-import Model = require('./parameterHintsModel');
-import EditorBrowser = require('vs/editor/browser/editorBrowser');
-import EditorCommon = require('vs/editor/common/editorCommon');
-import Modes = require('vs/editor/common/modes');
-import EventEmitter = require('vs/base/common/eventEmitter');
-
-var $ = Builder.$;
+import {Builder, $} from 'vs/base/browser/builder';
+import aria = require('vs/base/browser/ui/aria/aria');
+import {EventType, ICursorSelectionChangedEvent, IConfigurationChangedEvent} from 'vs/editor/common/editorCommon';
+import {IParameterHints, ISignature} from 'vs/editor/common/modes';
+import {ContentWidgetPositionPreference, ICodeEditor, IContentWidget, IContentWidgetPosition} from 'vs/editor/browser/editorBrowser';
+import {IHintEvent, ParameterHintsModel} from './parameterHintsModel';
 
 interface ISignatureView {
 	top: number;
 	height: number;
 }
 
-export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
+export class ParameterHintsWidget implements IContentWidget {
 
 	static ID = 'editor.widget.parameterHintsWidget';
 
-	private editor: EditorBrowser.ICodeEditor;
-	private modelListenersToRemove: EventEmitter.ListenerUnbind[];
-	private model: Model.ParameterHintsModel;
-	private $el: Builder.Builder;
-	private $wrapper: Builder.Builder;
-	private $signatures: Builder.Builder;
-	private $overloads: Builder.Builder;
+	private editor: ICodeEditor;
+	private model: ParameterHintsModel;
+	private $el: Builder;
+	private $wrapper: Builder;
+	private $signatures: Builder;
+	private $overloads: Builder;
 	private signatureViews: ISignatureView[];
 	private currentSignature: number;
 	private isDisposed: boolean;
 	private isVisible: boolean;
-	private toDispose: lifecycle.IDisposable[];
+	private parameterHints: IParameterHints;
+	private announcedLabel: string;
+	private toDispose: IDisposable[];
 
 	private _onShown: () => void;
 	private _onHidden: () => void;
@@ -45,16 +45,29 @@ export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
 	// Editor.IContentWidget.allowEditorOverflow
 	public allowEditorOverflow = true;
 
-	constructor(model: Model.ParameterHintsModel, editor: EditorBrowser.ICodeEditor, onShown: () => void, onHidden: () => void) {
+	constructor(model: ParameterHintsModel, editor: ICodeEditor, onShown: () => void, onHidden: () => void) {
 		this._onShown = onShown;
 		this._onHidden = onHidden;
 		this.editor = editor;
-		this.modelListenersToRemove = [];
 		this.model = null;
 		this.isVisible = false;
 		this.isDisposed = false;
 
-		this.setModel(model);
+		this.model = model;
+
+		this.toDispose = [];
+
+		this.toDispose.push(this.model.onHint((e:IHintEvent) => {
+			this.show();
+			this.parameterHints = e.hints;
+			this.render(e.hints);
+			this.currentSignature = e.hints.currentSignature;
+			this.select(this.currentSignature);
+		}));
+
+		this.toDispose.push(this.model.onCancel(() => {
+			this.hide();
+		}));
 
 		this.$el = $('.editor-widget.parameter-hints-widget').on('click', () => {
 			this.selectNext();
@@ -87,31 +100,25 @@ export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
 		this.editor.addContentWidget(this);
 		this.hide();
 
-		this.toDispose = [];
-
-		this.toDispose.push(this.editor.addListener2(EditorCommon.EventType.CursorSelectionChanged,(e: EditorCommon.ICursorSelectionChangedEvent) => {
-			this.editor.layoutContentWidget(this);
-		}));
-	}
-
-	private setModel(newModel: Model.ParameterHintsModel): void {
-		this.releaseModel();
-		this.model = newModel;
-
-		this.modelListenersToRemove.push(this.model.addListener('hint', (e:Model.IHintEvent) => {
-			this.show();
-			this.render(e.hints);
-			this.currentSignature = e.hints.currentSignature;
-			this.select(this.currentSignature);
+		this.toDispose.push(this.editor.addListener2(EventType.CursorSelectionChanged,(e: ICursorSelectionChangedEvent) => {
+			if (this.isVisible) {
+				this.editor.layoutContentWidget(this);
+			}
 		}));
 
-		this.modelListenersToRemove.push(this.model.addListener('cancel', (e) => {
-			this.hide();
+		this.editor.applyFontInfo(this.getDomNode());
+		this.toDispose.push(this.editor.addListener2(EventType.ConfigurationChanged,(e: IConfigurationChangedEvent) => {
+			if (e.fontInfo) {
+				this.editor.applyFontInfo(this.getDomNode());
+			}
 		}));
 	}
 
 	private show(): void {
 		if (this.isDisposed) {
+			return;
+		}
+		if (this.isVisible) {
 			return;
 		}
 		this._onShown();
@@ -127,24 +134,29 @@ export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
 		if (this.isDisposed) {
 			return;
 		}
+		if (!this.isVisible) {
+			return;
+		}
 		this._onHidden();
 
 		this.isVisible = false;
+		this.parameterHints = null;
+		this.announcedLabel = null;
 		this.$el.removeClass('visible');
 		this.editor.layoutContentWidget(this);
 	}
 
-	public getPosition():EditorBrowser.IContentWidgetPosition {
+	public getPosition():IContentWidgetPosition {
 		if (this.isVisible) {
 			return {
 				position: this.editor.getPosition(),
-				preference: [EditorBrowser.ContentWidgetPositionPreference.ABOVE, EditorBrowser.ContentWidgetPositionPreference.BELOW]
+				preference: [ContentWidgetPositionPreference.ABOVE, ContentWidgetPositionPreference.BELOW]
 			};
 		}
 		return null;
 	}
 
-	private render(hints:Modes.IParameterHints): void {
+	private render(hints:IParameterHints): void {
 		if (hints.signatures.length > 1) {
 			this.$el.addClass('multiple');
 		} else {
@@ -172,7 +184,7 @@ export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
 		}
 	}
 
-	private renderSignature($el:Builder.Builder, signature:Modes.ISignature, currentParameter:number):Builder.Builder {
+	private renderSignature($el:Builder, signature:ISignature, currentParameter:number):Builder {
 
 		var $signature = $('.signature').appendTo($el),
 			hasParameters = signature.parameters.length > 0;
@@ -199,7 +211,7 @@ export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
 		return $signature;
 	}
 
-	private renderDocumentation($el:Builder.Builder, signature:Modes.ISignature, activeParameterIdx:number): void {
+	private renderDocumentation($el:Builder, signature:ISignature, activeParameterIdx:number): void {
 
 		if(signature.documentation) {
 			$el.append($('.documentation').text(signature.documentation));
@@ -231,6 +243,15 @@ export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
 		}
 
 		this.$overloads.text(overloads);
+		if (this.parameterHints && this.parameterHints.signatures[position].parameters[this.parameterHints.currentParameter]) {
+			const labelToAnnounce = this.parameterHints.signatures[position].parameters[this.parameterHints.currentParameter].label;
+			// Select method gets called on every user type while parameter hints are visible.
+			// We do not want to spam the user with same announcements, so we only announce if the current parameter changed.
+			if (this.announcedLabel !== labelToAnnounce) {
+				aria.alert(nls.localize('hint', "{0}, hint", labelToAnnounce));
+				this.announcedLabel = labelToAnnounce;
+			}
+		}
 		this.editor.layoutContentWidget(this);
 	}
 
@@ -273,20 +294,10 @@ export class ParameterHintsWidget implements EditorBrowser.IContentWidget {
 		return ParameterHintsWidget.ID;
 	}
 
-	private releaseModel(): void {
-		var listener:()=>void;
-		while (listener = this.modelListenersToRemove.pop()) {
-			listener();
-		}
-		if (this.model) {
-			this.model.dispose();
-			this.model = null;
-		}
-	}
-
 	public destroy(): void {
-		this.toDispose = lifecycle.disposeAll(this.toDispose);
-		this.releaseModel();
+		this.toDispose = dispose(this.toDispose);
+
+		this.model = null;
 
 		if (this.$overloads) {
 			this.$overloads.destroy();

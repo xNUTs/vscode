@@ -11,8 +11,7 @@ import Types = require('vs/editor/common/modes/monarch/monarchTypes');
 import Compile = require('vs/editor/common/modes/monarch/monarchCompile');
 import Modes = require('vs/editor/common/modes');
 import MarkdownWorker = require('vs/languages/markdown/common/markdownWorker');
-import {OneWorkerAttr} from 'vs/platform/thread/common/threadService';
-import {AsyncDescriptor2, createAsyncDescriptor2} from 'vs/platform/instantiation/common/descriptors';
+import {OneWorkerAttr, AllWorkersAttr} from 'vs/platform/thread/common/threadService';
 import {htmlTokenTypes} from 'vs/languages/html/common/html';
 import markdownTokenTypes = require('vs/languages/markdown/common/markdownTokenTypes');
 import {IModeService} from 'vs/editor/common/services/modeService';
@@ -20,6 +19,8 @@ import {IInstantiationService} from 'vs/platform/instantiation/common/instantiat
 import {IThreadService} from 'vs/platform/thread/common/thread';
 import {IModelService} from 'vs/editor/common/services/modelService';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
+import {IEditorWorkerService} from 'vs/editor/common/services/editorWorkerService';
+import {ModeWorkerManager} from 'vs/editor/common/modes/abstractMode';
 
 export const language =
 	<Types.ILanguage>{
@@ -72,10 +73,10 @@ export const language =
 				[/^(\t|[ ]{4})[^ ].*$/, markdownTokenTypes.TOKEN_BLOCK],
 
 				// code block (3 tilde)
-				[/^\s*~{3}\s*((?:\w|[\/\-])+)?\s*$/, { token: markdownTokenTypes.TOKEN_BLOCK, next: '@codeblock' }],
+				[/^\s*~{3}\s*((?:\w|[\/\-#])+)?\s*$/, { token: markdownTokenTypes.TOKEN_BLOCK, next: '@codeblock' }],
 
 				// github style code blocks (with backticks and language)
-				[/^\s*```\s*((?:\w|[\/\-])+)\s*$/, { token: markdownTokenTypes.TOKEN_BLOCK, next: '@codeblockgh', nextEmbedded: '$1' }],
+				[/^\s*```\s*((?:\w|[\/\-#])+)\s*$/, { token: markdownTokenTypes.TOKEN_BLOCK, next: '@codeblockgh', nextEmbedded: '$1' }],
 
 				// github style code blocks (with backticks but no language)
 				[/^\s*`{3}\s*$/, { token: markdownTokenTypes.TOKEN_BLOCK, next: '@codeblock' }],
@@ -205,9 +206,13 @@ export const language =
 		}
 	};
 
-export class MarkdownMode extends Monarch.MonarchMode<MarkdownWorker.MarkdownWorker> implements Modes.IEmitOutputSupport {
+export class MarkdownMode extends Monarch.MonarchMode implements Modes.IEmitOutputSupport {
 
 	public emitOutputSupport: Modes.IEmitOutputSupport;
+	public configSupport:Modes.IConfigurationSupport;
+
+	private _modeWorkerManager: ModeWorkerManager<MarkdownWorker.MarkdownWorker>;
+	private _threadService:IThreadService;
 
 	constructor(
 		descriptor:Modes.IModeDescriptor,
@@ -215,19 +220,36 @@ export class MarkdownMode extends Monarch.MonarchMode<MarkdownWorker.MarkdownWor
 		@IThreadService threadService: IThreadService,
 		@IModeService modeService: IModeService,
 		@IModelService modelService: IModelService,
-		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService
+		@IWorkspaceContextService workspaceContextService: IWorkspaceContextService,
+		@IEditorWorkerService editorWorkerService: IEditorWorkerService
 	) {
-		super(descriptor, Compile.compile(language), instantiationService, threadService, modeService, modelService);
+		super(descriptor.id, Compile.compile(language), modeService, modelService, editorWorkerService);
+		this._modeWorkerManager = new ModeWorkerManager<MarkdownWorker.MarkdownWorker>(descriptor, 'vs/languages/markdown/common/markdownWorker', 'MarkdownWorker', null, instantiationService);
+		this._threadService = threadService;
 
 		this.emitOutputSupport = this;
+		this.configSupport = this;
+	}
+
+	private _worker<T>(runner:(worker:MarkdownWorker.MarkdownWorker)=>WinJS.TPromise<T>): WinJS.TPromise<T> {
+		return this._modeWorkerManager.worker(runner);
+	}
+
+	public configure(options:any): WinJS.TPromise<void> {
+		if (this._threadService.isInMainThread) {
+			return this._configureWorkers(options);
+		} else {
+			return this._worker((w) => w._doConfigure(options));
+		}
+	}
+
+	static $_configureWorkers = AllWorkersAttr(MarkdownMode, MarkdownMode.prototype._configureWorkers);
+	private _configureWorkers(options:any): WinJS.TPromise<void> {
+		return this._worker((w) => w._doConfigure(options));
 	}
 
 	static $getEmitOutput = OneWorkerAttr(MarkdownMode, MarkdownMode.prototype.getEmitOutput);
 	public getEmitOutput(resource: URI, absoluteWorkerResourcesPath?: string): WinJS.TPromise<Modes.IEmitOutput> { // TODO@Ben technical debt: worker cannot resolve paths absolute
 		return this._worker((w) => w.getEmitOutput(resource, absoluteWorkerResourcesPath));
-	}
-
-	protected _getWorkerDescriptor(): AsyncDescriptor2<Modes.IMode, Modes.IWorkerParticipant[], MarkdownWorker.MarkdownWorker> {
-		return createAsyncDescriptor2('vs/languages/markdown/common/markdownWorker', 'MarkdownWorker');
 	}
 }

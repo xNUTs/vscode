@@ -15,18 +15,21 @@ import {ITree, IFocusEvent, ISelectionEvent} from 'vs/base/parts/tree/browser/tr
 import {prepareActions} from 'vs/workbench/browser/actionBarRegistry';
 import {ToolBar} from 'vs/base/browser/ui/toolbar/toolbar';
 import {DelayedDragHandler} from 'vs/base/browser/dnd';
-import {disposeAll, IDisposable} from 'vs/base/common/lifecycle';
-import {CollapsibleView, CollapsibleState, FixedCollapsibleView} from 'vs/base/browser/ui/splitview/splitview';
+import {dispose, IDisposable} from 'vs/base/common/lifecycle';
+import {CollapsibleView, CollapsibleState, FixedCollapsibleView, IView} from 'vs/base/browser/ui/splitview/splitview';
 import {IViewletService} from 'vs/workbench/services/viewlet/common/viewletService';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IViewlet} from 'vs/workbench/common/viewlet';
 import {Composite, CompositeDescriptor, CompositeRegistry} from 'vs/workbench/browser/composite';
 import {IContextMenuService} from 'vs/platform/contextview/browser/contextView';
 import {IMessageService} from 'vs/platform/message/common/message';
-import {StructuredSelection} from 'vs/platform/selection/common/selection';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
 
-export abstract class Viewlet extends Composite implements IViewlet { }
+export abstract class Viewlet extends Composite implements IViewlet {
+
+	public getOptimalWidth(): number {
+		return null;
+	}
+}
 
 /**
  * Helper subtype of viewlet for those that use a tree inside.
@@ -133,14 +136,6 @@ export abstract class ViewerViewlet extends Viewlet {
 		return this.viewer;
 	}
 
-	public getSelection(): StructuredSelection {
-		if (!this.viewer) {
-			return new StructuredSelection([]); // return early if viewlet has not yet been created
-		}
-
-		return new StructuredSelection(this.viewer.getSelection());
-	}
-
 	public dispose(): void {
 
 		// Dispose Viewer
@@ -153,7 +148,7 @@ export abstract class ViewerViewlet extends Viewlet {
 }
 
 /**
- * A viewlet descriptor is a leightweight descriptor of a viewlet in the monaco workbench.
+ * A viewlet descriptor is a leightweight descriptor of a viewlet in the workbench.
  */
 export class ViewletDescriptor extends CompositeDescriptor<Viewlet> { }
 
@@ -254,8 +249,8 @@ export class ToggleViewletAction extends Action {
 // Collapse All action
 export class CollapseAction extends Action {
 
-	constructor(viewer: ITree, enabled: boolean, clazz: string, @INullService ns) {
-		super('workbench.action.collapse', nls.localize('collapse', "Collapse"), clazz, enabled, (context: any) => {
+	constructor(viewer: ITree, enabled: boolean, clazz: string) {
+		super('workbench.action.collapse', nls.localize('collapse', "Collapse All"), clazz, enabled, (context: any) => {
 			if (viewer.getHighlight()) {
 				return TPromise.as(null); // Global action disabled if user is in edit mode from another action
 			}
@@ -271,20 +266,21 @@ export class CollapseAction extends Action {
 	}
 }
 
-export interface IViewletView {
+export interface IViewletView extends IView {
 	create(): TPromise<void>;
-	refresh(focus: boolean, reveal: boolean, instantProgress?: boolean): TPromise<void>;
 	setVisible(visible: boolean): TPromise<void>;
 	getActions(): IAction[];
 	getSecondaryActions(): IAction[];
 	getActionItem(action: IAction): IActionItem;
 	shutdown(): void;
+	focusBody(): void;
+	isExpanded(): boolean;
 }
 
 /**
  * The AdaptiveCollapsibleViewletView can grow with the content inside dynamically.
  */
-export class AdaptiveCollapsibleViewletView extends FixedCollapsibleView implements IViewletView {
+export abstract class AdaptiveCollapsibleViewletView extends FixedCollapsibleView implements IViewletView {
 	protected treeContainer: HTMLElement;
 	protected tree: ITree;
 	protected toDispose: IDisposable[];
@@ -351,24 +347,16 @@ export class AdaptiveCollapsibleViewletView extends FixedCollapsibleView impleme
 		return this.tree;
 	}
 
-	public refresh(focus: boolean, reveal: boolean, instantProgress?: boolean): TPromise<void> {
-		return TPromise.as(null);
-	}
-
 	public setVisible(visible: boolean): TPromise<void> {
 		this.isVisible = visible;
 
-		updateTreeVisibility(this.tree, this.state === CollapsibleState.EXPANDED);
+		updateTreeVisibility(this.tree, visible && this.state === CollapsibleState.EXPANDED);
 
 		return TPromise.as(null);
 	}
 
 	public focusBody(): void {
 		focus(this.tree);
-	}
-
-	public getSelection(): StructuredSelection {
-		return new StructuredSelection(this.tree.getSelection());
 	}
 
 	protected reveal(element: any, relativeTop?: number): TPromise<void> {
@@ -403,7 +391,7 @@ export class AdaptiveCollapsibleViewletView extends FixedCollapsibleView impleme
 
 		this.dragHandler.dispose();
 
-		this.toDispose = disposeAll(this.toDispose);
+		this.toDispose = dispose(this.toDispose);
 
 		if (this.toolBar) {
 			this.toolBar.dispose();
@@ -413,7 +401,7 @@ export class AdaptiveCollapsibleViewletView extends FixedCollapsibleView impleme
 	}
 }
 
-export class CollapsibleViewletView extends CollapsibleView implements IViewletView {
+export abstract class CollapsibleViewletView extends CollapsibleView implements IViewletView {
 	protected treeContainer: HTMLElement;
 	protected tree: ITree;
 	protected toDispose: IDisposable[];
@@ -478,24 +466,16 @@ export class CollapsibleViewletView extends CollapsibleView implements IViewletV
 		return this.tree;
 	}
 
-	public refresh(focus: boolean, reveal: boolean, instantProgress?: boolean): TPromise<void> {
-		return TPromise.as(null);
-	}
-
 	public setVisible(visible: boolean): TPromise<void> {
 		this.isVisible = visible;
 
-		updateTreeVisibility(this.tree, this.state === CollapsibleState.EXPANDED);
+		updateTreeVisibility(this.tree, visible && this.state === CollapsibleState.EXPANDED);
 
 		return TPromise.as(null);
 	}
 
 	public focusBody(): void {
 		focus(this.tree);
-	}
-
-	public getSelection(): StructuredSelection {
-		return new StructuredSelection(this.tree.getSelection());
 	}
 
 	protected reveal(element: any, relativeTop?: number): TPromise<void> {
@@ -530,7 +510,7 @@ export class CollapsibleViewletView extends CollapsibleView implements IViewletV
 
 		this.dragHandler.dispose();
 
-		this.toDispose = disposeAll(this.toDispose);
+		this.toDispose = dispose(this.toDispose);
 
 		if (this.toolBar) {
 			this.toolBar.dispose();
@@ -573,7 +553,7 @@ function focus(tree: ITree): void {
 	// Make sure the current selected element is revealed
 	let selection = tree.getSelection();
 	if (selection.length > 0) {
-		reveal(tree, selection[0], 0.5);
+		reveal(tree, selection[0], 0.5).done(null, errors.onUnexpectedError);
 	}
 
 	// Pass Focus to Viewer

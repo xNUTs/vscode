@@ -4,16 +4,16 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import { TPromise } from 'vs/base/common/winjs.base';
+import {onUnexpectedError} from 'vs/base/common/errors';
 import Event, { Emitter } from 'vs/base/common/event';
-import { onUnexpectedError } from 'vs/base/common/errors';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import {startsWith} from 'vs/base/common/strings';
-import * as EditorCommon from 'vs/editor/common/editorCommon';
-import { ISuggestSupport, ISuggestion } from 'vs/editor/common/modes';
-import { CodeSnippet } from 'vs/editor/contrib/snippet/common/snippet';
-import { IDisposable, disposeAll } from 'vs/base/common/lifecycle';
-import { SuggestRegistry, ISuggestResult2, suggest } from '../common/suggest';
-import { CompletionModel } from './completionModel';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {EventType, ICommonCodeEditor, ICursorSelectionChangedEvent, IPosition, CursorChangeReason} from 'vs/editor/common/editorCommon';
+import {ISuggestSupport, ISuggestion, SuggestRegistry} from 'vs/editor/common/modes';
+import {CodeSnippet} from 'vs/editor/contrib/snippet/common/snippet';
+import {ISuggestResult2, suggest} from '../common/suggest';
+import {CompletionModel} from './completionModel';
 
 export interface ICancelEvent {
 	retrigger: boolean;
@@ -45,13 +45,13 @@ class Context {
 	public isInEditableRange: boolean;
 
 	private isAutoTriggerEnabled: boolean;
-	private lineContentBefore: string;
-	private lineContentAfter: string;
+	public lineContentBefore: string;
+	public lineContentAfter: string;
 
 	public wordBefore: string;
 	public wordAfter: string;
 
-	constructor(editor: EditorCommon.ICommonCodeEditor, private auto: boolean) {
+	constructor(editor: ICommonCodeEditor, private auto: boolean) {
 		const model = editor.getModel();
 		const position = editor.getPosition();
 		const lineContent = model.getLineContent(position.lineNumber);
@@ -171,7 +171,7 @@ export class SuggestModel implements IDisposable {
 	private requestPromise: TPromise<void>;
 	private context: Context;
 
-	private raw: ISuggestResult2[][];
+	private raw: ISuggestResult2[];
 	private completionModel: CompletionModel;
 	private incomplete: boolean;
 
@@ -187,7 +187,7 @@ export class SuggestModel implements IDisposable {
 	private _onDidAccept: Emitter<IAcceptEvent> = new Emitter();
 	public get onDidAccept(): Event<IAcceptEvent> { return this._onDidAccept.event; }
 
-	constructor(private editor: EditorCommon.ICommonCodeEditor) {
+	constructor(private editor: ICommonCodeEditor) {
 		this.state = State.Idle;
 		this.triggerAutoSuggestPromise = null;
 		this.requestPromise = null;
@@ -197,9 +197,10 @@ export class SuggestModel implements IDisposable {
 		this.context = null;
 
 		this.toDispose = [];
-		this.toDispose.push(this.editor.addListener2(EditorCommon.EventType.ConfigurationChanged, () => this.onEditorConfigurationChange()));
-		this.toDispose.push(this.editor.addListener2(EditorCommon.EventType.CursorSelectionChanged, e => this.onCursorChange(e)));
-		this.toDispose.push(this.editor.addListener2(EditorCommon.EventType.ModelChanged, () => this.cancel()));
+		this.toDispose.push(this.editor.addListener2(EventType.ConfigurationChanged, () => this.onEditorConfigurationChange()));
+		this.toDispose.push(this.editor.addListener2(EventType.CursorSelectionChanged, e => this.onCursorChange(e)));
+		this.toDispose.push(this.editor.addListener2(EventType.ModelChanged, () => this.cancel()));
+		this.toDispose.push(SuggestRegistry.onDidChange(this.onSuggestRegistryChange, this));
 		this.onEditorConfigurationChange();
 	}
 
@@ -229,7 +230,7 @@ export class SuggestModel implements IDisposable {
 		return actuallyCanceled;
 	}
 
-	public getRequestPosition(): EditorCommon.IPosition {
+	public getRequestPosition(): IPosition {
 		if (!this.context) {
 			return null;
 		}
@@ -244,13 +245,13 @@ export class SuggestModel implements IDisposable {
 		return this.state === State.Auto;
 	}
 
-	private onCursorChange(e: EditorCommon.ICursorSelectionChangedEvent): void {
+	private onCursorChange(e: ICursorSelectionChangedEvent): void {
 		if (!e.selection.isEmpty()) {
 			this.cancel();
 			return;
 		}
 
-		if (e.source !== 'keyboard' || e.reason !== '') {
+		if (e.source !== 'keyboard' || e.reason !== CursorChangeReason.NotSet) {
 			this.cancel();
 			return;
 		}
@@ -261,7 +262,7 @@ export class SuggestModel implements IDisposable {
 
 		const isInactive = this.state === State.Idle;
 
-		if (isInactive && !this.editor.getConfiguration().quickSuggestions) {
+		if (isInactive && !this.editor.getConfiguration().contribInfo.quickSuggestions) {
 			return;
 		}
 
@@ -284,6 +285,19 @@ export class SuggestModel implements IDisposable {
 		} else {
 			this.onNewContext(ctx);
 		}
+	}
+
+	private onSuggestRegistryChange(): void {
+		if (this.state === State.Idle) {
+			return;
+		}
+
+		if (!SuggestRegistry.has(this.editor.getModel())) {
+			this.cancel();
+			return;
+		}
+
+		this.trigger(this.state === State.Auto, undefined, true);
 	}
 
 	public trigger(auto: boolean, triggerCharacter?: string, retrigger: boolean = false, groups?: ISuggestSupport[][]): void {
@@ -319,7 +333,7 @@ export class SuggestModel implements IDisposable {
 			}
 
 			this.raw = all;
-			this.incomplete = all.reduce((r, s) => r || s.reduce((r, s) => r || s.incomplete, false), false);
+			this.incomplete = all.some(result => result.incomplete);
 
 			this.onNewContext(new Context(this.editor, auto));
 		}).then(null, onUnexpectedError);
@@ -341,16 +355,20 @@ export class SuggestModel implements IDisposable {
 
 			let isFrozen = false;
 			if (this.completionModel && this.completionModel.raw === this.raw) {
-				const oldCurrentWord = this.completionModel.currentWord;
-				this.completionModel.currentWord = ctx.wordBefore;
-				let visibleCount = this.completionModel.items.length;
+				const oldLineContext = this.completionModel.lineContext;
+				this.completionModel.lineContext = {
+					leadingLineContent: ctx.lineContentBefore,
+					characterCountDelta: this.context
+						? ctx.column - this.context.column
+						: 0
+				};
 
-				if (!auto && visibleCount === 0) {
-					this.completionModel.currentWord = oldCurrentWord;
+				if (!auto && this.completionModel.items.length === 0) {
+					this.completionModel.lineContext = oldLineContext;
 					isFrozen = true;
 				}
 			} else {
-				this.completionModel = new CompletionModel(this.raw, ctx.wordBefore);
+				this.completionModel = new CompletionModel(this.raw, ctx.lineContentBefore);
 			}
 
 			this._onDidSuggest.fire({
@@ -378,7 +396,7 @@ export class SuggestModel implements IDisposable {
 	}
 
 	private onEditorConfigurationChange(): void {
-		this.autoSuggestDelay = this.editor.getConfiguration().quickSuggestionsDelay;
+		this.autoSuggestDelay = this.editor.getConfiguration().contribInfo.quickSuggestionsDelay;
 
 		if (isNaN(this.autoSuggestDelay) || (!this.autoSuggestDelay && this.autoSuggestDelay !== 0) || this.autoSuggestDelay < 0) {
 			this.autoSuggestDelay = 10;
@@ -387,6 +405,6 @@ export class SuggestModel implements IDisposable {
 
 	public dispose(): void {
 		this.cancel(true);
-		this.toDispose = disposeAll(this.toDispose);
+		this.toDispose = dispose(this.toDispose);
 	}
 }

@@ -7,7 +7,7 @@ import 'vs/css!../browser/media/output.contribution';
 import nls = require('vs/nls');
 import {KeyMod, KeyCode} from 'vs/base/common/keyCodes';
 import {CommonEditorRegistry, EditorActionDescriptor} from 'vs/editor/common/editorCommonExtensions';
-import {registerMode} from 'vs/editor/common/modes/modesRegistry';
+import {ModesRegistry} from 'vs/editor/common/modes/modesRegistry';
 import platform = require('vs/platform/platform');
 import {SyncActionDescriptor} from 'vs/platform/actions/common/actions';
 import {registerSingleton} from 'vs/platform/instantiation/common/extensions';
@@ -21,7 +21,7 @@ import panel = require('vs/workbench/browser/panel');
 registerSingleton(IOutputService, OutputService);
 
 // Register Output Mode
-registerMode({
+ModesRegistry.registerCompatMode({
 	id: OUTPUT_MODE_ID,
 	extensions: [],
 	aliases: [null],
@@ -46,7 +46,7 @@ actionRegistry.registerWorkbenchAction(new SyncActionDescriptor(ToggleOutputActi
 	linux: {
 		primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_H  // On Ubuntu Ctrl+Shift+U is taken by some global OS command
 	}
-}), nls.localize('viewCategory', "View"));
+}), 'View: Toggle Output', nls.localize('viewCategory', "View"));
 
 // Contribute to Context Menu of Output Window
-CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(ClearOutputEditorAction, ClearOutputEditorAction.ID, nls.localize('clearOutput.label', "Clear Output")));
+CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(ClearOutputEditorAction, ClearOutputEditorAction.ID, nls.localize('clearOutput.label', "Clear Output"), void 0, 'Clear Output'));

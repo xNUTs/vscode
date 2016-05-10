@@ -406,8 +406,8 @@ export class QuickOpenEntryGroup extends QuickOpenEntry {
 		return this.entry ? this.entry.isHidden() : super.isHidden();
 	}
 
-	public setHighlights(labelHighlights: IHighlight[], descriptionHighlights?: IHighlight[]): void {
-		this.entry ? this.entry.setHighlights(labelHighlights, descriptionHighlights) : super.setHighlights(labelHighlights, descriptionHighlights);
+	public setHighlights(labelHighlights: IHighlight[], descriptionHighlights?: IHighlight[], detailHighlights?: IHighlight[]): void {
+		this.entry ? this.entry.setHighlights(labelHighlights, descriptionHighlights, detailHighlights) : super.setHighlights(labelHighlights, descriptionHighlights, detailHighlights);
 	}
 
 	public setHidden(hidden: boolean): void {
@@ -644,12 +644,27 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 
 			// Description
 			data.description.set(entry.getDescription(), descriptionHighlights || []);
+			data.description.element.title = entry.getDescription();
 		}
 	}
 
 	public disposeTemplate(templateId: string, templateData: any): void {
 		if (templateId === templateEntryItem) {
 			this.entryItemRenderer.disposeTemplate(null, templateId, templateData);
+		} else {
+			const data = templateData as IQuickOpenEntryGroupTemplateData;
+			data.actionBar.dispose();
+			data.actionBar = null;
+			data.container = null;
+			data.description.dispose();
+			data.description = null;
+			data.detail.dispose();
+			data.detail = null;
+			data.group = null;
+			data.icon = null;
+			data.label.dispose();
+			data.label = null;
+			data.prefix = null;
 		}
 	}
 }

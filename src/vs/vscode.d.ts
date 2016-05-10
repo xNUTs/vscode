@@ -3,10 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/*
-	This is the Type Definition file for VSCode version 0.10.1
-*/
-
 declare namespace vscode {
 
 	/**
@@ -77,7 +73,7 @@ declare namespace vscode {
 
 		/**
 		 * The offset of the first character which is not a whitespace character as defined
-		 * by `/\s/`.
+		 * by `/\s/`. **Note** that if a line is all whitespaces the length of the line is returned.
 		 *
 		 * @readonly
 		 */
@@ -148,7 +144,8 @@ declare namespace vscode {
 		 * Save the underlying file.
 		 *
 		 * @return A promise that will resolve to true when the file
-		 * has been saved.
+		 * has been saved. If the file was not dirty or the save failed,
+		 * will return false.
 		 */
 		save(): Thenable<boolean>;
 
@@ -524,6 +521,24 @@ declare namespace vscode {
 	}
 
 	/**
+	 * Rendering style of the cursor.
+	 */
+	export enum TextEditorCursorStyle {
+		/**
+		 * Render the cursor as a vertical line.
+		 */
+		Line = 1,
+		/**
+		 * Render the cursor as a block.
+		 */
+		Block = 2,
+		/**
+		 * Render the cursor as a horizontal line under the character.
+		 */
+		Underline = 3
+	}
+
+	/**
 	 * Represents a [text editor](#TextEditor)'s [options](#TextEditor.options).
 	 */
 	export interface TextEditorOptions {
@@ -532,13 +547,24 @@ declare namespace vscode {
 		 * The size in spaces a tab takes. This is used for two purposes:
 		 *  - the rendering width of a tab character;
 		 *  - the number of spaces to insert when [insertSpaces](#TextEditorOptions.insertSpaces) is true.
+		 * When getting a text editor's options, this property will always be a number (resolved).
+		 * When setting a text editor's options, this property is optional and it can be a number or `"auto"`.
 		 */
-		tabSize: number;
+		tabSize?: number | string;
 
 		/**
 		 * When pressing Tab insert [n](#TextEditorOptions.tabSize) spaces.
+		 * When getting a text editor's options, this property will always be a boolean (resolved).
+		 * When setting a text editor's options, this property is optional and it can be a boolean or `"auto"`.
 		 */
-		insertSpaces: boolean;
+		insertSpaces?: boolean | string;
+
+		/**
+		 * The rendering style of the cursor in this editor.
+		 * When getting a text editor's options, this property will always be present.
+		 * When setting a text editor's options, this property is optional.
+		 */
+		cursorStyle?: TextEditorCursorStyle;
 	}
 
 	/**
@@ -796,6 +822,20 @@ declare namespace vscode {
 	}
 
 	/**
+	 * Represents an end of line character sequence in a [document](#Document).
+	 */
+	export enum EndOfLine {
+		/**
+		 * The line feed `\n` character.
+		 */
+		LF = 1,
+		/**
+		 * The carriage return line feed `\r\n` sequence.
+		 */
+		CRLF = 2
+	}
+
+	/**
 	 * A complex edit that will be applied in one transaction on a TextEditor.
 	 * This holds a description of the edits and if the edits are valid (i.e. no overlapping regions, document was not changed in the meantime, etc.)
 	 * they can be applied on a [document](#Document) associated with a [text editor](#TextEditor).
@@ -827,6 +867,13 @@ declare namespace vscode {
 		 * @param location The range this operation should remove.
 		 */
 		delete(location: Range | Selection): void;
+
+		/**
+		 * Set the end of line sequence.
+		 *
+		 * @param endOfLine The new end of line for the [document](#Document).
+		 */
+		setEndOfLine(endOfLine: EndOfLine): void;
 	}
 
 	/**
@@ -881,21 +928,24 @@ declare namespace vscode {
 		fragment: string;
 
 		/**
-		 * The string representing the corresponding file system path of this URI.
+		 * The string representing the corresponding file system path of this Uri.
 		 *
 		 * Will handle UNC paths and normalize windows drive letters to lower-case. Also
 		 * uses the platform specific path separator. Will *not* validate the path for
-		 * invalid characters and semantics. Will *not* look at the scheme of this URI.
+		 * invalid characters and semantics. Will *not* look at the scheme of this Uri.
 		 */
 		fsPath: string;
 
 		/**
-		 * Returns a canonical representation of this URI. The representation and normalization
-		 * of a URI depends on the scheme.
+		 * Returns a string representation of this Uri. The representation and normalization
+		 * of a URI depends on the scheme. The resulting string can be safely used with
+		 * [Uri.parse](#Uri.parse).
 		 *
-		 * @returns A string that is the encoded version of this Uri.
+		 * @param skipEncoding Do not percentage-encode the result, defaults to `false`. Note that
+		 *	the `#` and `?` characters occuring in the path will always be encoded.
+		 * @returns A string representation of this Uri.
 		 */
-		toString(): string;
+		toString(skipEncoding?: boolean): string;
 
 		/**
 		 * Returns a JSON representation of this Uri.
@@ -1162,6 +1212,12 @@ declare namespace vscode {
 		 * A short title like 'Retry', 'Open Log' etc.
 		 */
 		title: string;
+
+		/**
+		 * Indicates that this item replaces the default
+		 * 'Close' action.
+		 */
+		isCloseAffordance?: boolean;
 	}
 
 	/**
@@ -1967,6 +2023,12 @@ declare namespace vscode {
 	 * A completion item represents a text snippet that is
 	 * proposed to complete text that is being typed.
 	 *
+	 * It is suffient to create a completion item from just
+	 * a [label](#CompletionItem.label). In that case the completion
+	 * item will replace the [word](#TextDocument.getWordRangeAtPosition)
+	 * until the cursor with the given label.
+	 *
+	 *
 	 * @see [CompletionItemProvider.provideCompletionItems](#CompletionItemProvider.provideCompletionItems)
 	 * @see [CompletionItemProvider.resolveCompletionItem](#CompletionItemProvider.resolveCompletionItem)
 	 */
@@ -2243,12 +2305,12 @@ declare namespace vscode {
 		 * @deprecated Will be replaced by a better API soon.
 		 */
 		__electricCharacterSupport?: {
-			brackets: {
-				tokenType: string;
-				open: string;
-				close: string;
-				isElectric: boolean;
-			}[];
+			/**
+			 * This property is deprecated and will be **ignored** from
+			 * the editor.
+			 * @deprecated
+			 */
+			brackets?: any;
 			docComment?: {
 				scope: string;
 				open: string;
@@ -2446,6 +2508,32 @@ declare namespace vscode {
 		clear(): void;
 
 		/**
+		 * Iterate over each entry in this collection.
+		 *
+		 * @param callback Function to execute for each entry.
+		 * @param thisArg The `this` context used when invoking the handler function.
+		 */
+		forEach(callback: (uri: Uri, diagnostics: Diagnostic[], collection: DiagnosticCollection) => any, thisArg?: any): void;
+
+		/**
+		 * Get the diagnostics for a given resource. *Note* that you cannot
+		 * modify the diagnostics-array returned from this call.
+		 *
+		 * @param uri A resource identifier.
+		 * @returns An immutable array of [diagnostics](#Diagnostic) or `undefined`.
+		 */
+		get(uri: Uri): Diagnostic[];
+
+		/**
+		 * Check if this collection contains diagnostics for a
+		 * given resource.
+		 *
+		 * @param uri A resource identifier.
+		 * @returns `true` if this collection has diagnostic for the given resource.
+		 */
+		has(uri: Uri): boolean;
+
+		/**
 		 * Dispose and free associated resources. Calls
 		 * [clear](#DiagnosticCollection.clear).
 		 */
@@ -2498,9 +2586,11 @@ declare namespace vscode {
 
 		/**
 		 * Reveal this channel in the UI.
-		 * @deprecated **This method is deprecated.**
 		 *
-		 * @param column The column in which to show the channel, default in [one](#ViewColumn.One).
+		 * @deprecated This method is **deprecated** and the overload with
+		 * just one parameter should be used (`show(preservceFocus?: boolean): void`).
+		 *
+		 * @param column This argument is **deprecated** and will be ignored.
 		 * @param preserveFocus When `true` the channel will not take focus.
 		 */
 		show(column?: ViewColumn, preserveFocus?: boolean): void;
@@ -2726,6 +2816,13 @@ declare namespace vscode {
 	export namespace env {
 
 		/**
+		 * The application name of the editor, like 'VS Code'.
+		 *
+		 * @readonly
+		 */
+		export let appName: string;
+
+		/**
 		 * Represents the preferred user-language, like `de-CH`, `fr`, or `en-US`.
 		 *
 		 * @readonly
@@ -2813,7 +2910,7 @@ declare namespace vscode {
 		 * @param thisArg The `this` context used when invoking the handler function.
 		 * @return Disposable which unregisters this command on disposal.
 		 */
-		export function registerTextEditorCommand(command: string, callback: (textEditor: TextEditor, edit: TextEditorEdit) => void, thisArg?: any): Disposable;
+		export function registerTextEditorCommand(command: string, callback: (textEditor: TextEditor, edit: TextEditorEdit, ...args: any[]) => void, thisArg?: any): Disposable;
 
 		/**
 		 * Executes the command denoted by the given command identifier.
@@ -2849,7 +2946,7 @@ declare namespace vscode {
 	export namespace window {
 
 		/**
-		 * The currently active editor or undefined. The active editor is the one
+		 * The currently active editor or `undefined`. The active editor is the one
 		 * that currently has focus or, when none has focus, the one that has changed
 		 * input most recently.
 		 */
@@ -2862,7 +2959,8 @@ declare namespace vscode {
 
 		/**
 		 * An [event](#Event) which fires when the [active editor](#window.activeTextEditor)
-		 * has changed.
+		 * has changed. *Note* that the event also fires when the active editor changes
+		 * to `undefined`.
 		 */
 		export const onDidChangeActiveTextEditor: Event<TextEditor>;
 
@@ -2877,7 +2975,7 @@ declare namespace vscode {
 		export const onDidChangeTextEditorOptions: Event<TextEditorOptionsChangeEvent>;
 
 		/**
-		 * An [event](#Event) which fires when the view column of an editor das changed.
+		 * An [event](#Event) which fires when the view column of an editor has changed.
 		 */
 		export const onDidChangeTextEditorViewColumn: Event<TextEditorViewColumnChangeEvent>;
 
@@ -3104,6 +3202,8 @@ declare namespace vscode {
 		/**
 		 * The folder that is open in VS Code. `undefined` when no folder
 		 * has been opened.
+		 *
+		 * @readonly
 		 */
 		export let rootPath: string;
 
@@ -3164,8 +3264,8 @@ declare namespace vscode {
 		 * [open document](#workspace.onDidOpenTextDocument)-event fires.
 		 * The document to open is denoted by the [uri](#Uri). Two schemes are supported:
 		 *
-		 * file: A file on disk, will be rejected if the file does not exist or cannot be loaded, e.g. 'file:///Users/frodo/r.ini'.
-		 * untitled: A new file that should be saved on disk, e.g. 'untitled:/Users/frodo/new.js'. The language will be derived from the file name.
+		 * file: A file on disk, will be rejected if the file does not exist or cannot be loaded, e.g. `file:///Users/frodo/r.ini`.
+		 * untitled: A new file that should be saved on disk, e.g. `untitled:c:\frodo\new.js`. The language will be derived from the file name.
 		 *
 		 * Uris with other schemes will make this method return a rejected promise.
 		 *
@@ -3426,7 +3526,7 @@ declare namespace vscode {
 		 * Register a reference provider.
 		 *
 		 * Multiple providers can be registered for a language. In that case providers are sorted
-		 * by their [score](#languages.match) and the result of best-matching provider is used. Failure
+		 * by their [score](#languages.match) and the best-matching provider is used. Failure
 		 * of the selected provider will cause a failure of the whole operation.
 		 *
 		 * @param selector A selector that defines the documents this provider is applicable to.
@@ -3439,7 +3539,7 @@ declare namespace vscode {
 		 * Register a formatting provider for a document.
 		 *
 		 * Multiple providers can be registered for a language. In that case providers are sorted
-		 * by their [score](#languages.match) and the result of best-matching provider is used. Failure
+		 * by their [score](#languages.match) and the best-matching provider is used. Failure
 		 * of the selected provider will cause a failure of the whole operation.
 		 *
 		 * @param selector A selector that defines the documents this provider is applicable to.
@@ -3452,7 +3552,7 @@ declare namespace vscode {
 		 * Register a formatting provider for a document range.
 		 *
 		 * Multiple providers can be registered for a language. In that case providers are sorted
-		 * by their [score](#languages.match) and the result of best-matching provider is used. Failure
+		 * by their [score](#languages.match) and the best-matching provider is used. Failure
 		 * of the selected provider will cause a failure of the whole operation.
 		 *
 		 * @param selector A selector that defines the documents this provider is applicable to.
@@ -3462,10 +3562,10 @@ declare namespace vscode {
 		export function registerDocumentRangeFormattingEditProvider(selector: DocumentSelector, provider: DocumentRangeFormattingEditProvider): Disposable;
 
 		/**
-		 * Register a formatting provider that works on type.
+		 * Register a formatting provider that works on type. The provider is active when the user enables the setting `editor.formatOnType`.
 		 *
 		 * Multiple providers can be registered for a language. In that case providers are sorted
-		 * by their [score](#languages.match) and the result of best-matching provider is used. Failure
+		 * by their [score](#languages.match) and the best-matching provider is used. Failure
 		 * of the selected provider will cause a failure of the whole operation.
 		 *
 		 * @param selector A selector that defines the documents this provider is applicable to.
@@ -3480,7 +3580,7 @@ declare namespace vscode {
 		 * Register a signature help provider.
 		 *
 		 * Multiple providers can be registered for a language. In that case providers are sorted
-		 * by their [score](#languages.match) and the result of best-matching provider is used. Failure
+		 * by their [score](#languages.match) and the best-matching provider is used. Failure
 		 * of the selected provider will cause a failure of the whole operation.
 		 *
 		 * @param selector A selector that defines the documents this provider is applicable to.
@@ -3653,10 +3753,10 @@ interface PromiseConstructor {
 	reject<T>(reason: any): Promise<T>;
 
 	/**
-	  * Creates a new resolved promise for the provided value.
-	  * @param value A promise.
-	  * @returns A promise whose internal state matches the provided promise.
-	  */
+	 * Creates a new resolved promise for the provided value.
+	 * @param value A promise.
+	 * @returns A promise whose internal state matches the provided promise.
+	 */
 	resolve<T>(value: T | Thenable<T>): Promise<T>;
 
 	/**

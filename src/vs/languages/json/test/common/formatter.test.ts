@@ -17,8 +17,7 @@ suite('JSON - formatter', () => {
 	function format(unformatted: string, expected: string, insertSpaces = true) {
 		var range : EditorCommon.IRange = null;
 
-		var mockMode = ModesTestUtils.createMockMode('mock.mode.id');
-		var mirrorModel = MirrorModel.createMirrorModelFromString(null, 1, unformatted, mockMode);
+		var mirrorModel = MirrorModel.createTestMirrorModelFromString(unformatted);
 
 		var rangeStart = unformatted.indexOf('|');
 		var rangeEnd = unformatted.lastIndexOf('|');
@@ -28,12 +27,12 @@ suite('JSON - formatter', () => {
 			var startPos = mirrorModel.getPositionFromOffset(rangeStart);
 			var endPos = mirrorModel.getPositionFromOffset(rangeEnd);
 			range = { startLineNumber: startPos.lineNumber, startColumn: startPos.column, endLineNumber: endPos.lineNumber, endColumn: endPos.column };
-			mirrorModel = MirrorModel.createMirrorModelFromString(null, 1, unformatted, mockMode);
+			mirrorModel = MirrorModel.createTestMirrorModelFromString(unformatted);
 		}
 
 		var operations = Formatter.format(mirrorModel, range, { tabSize: 2, insertSpaces: insertSpaces });
 
-		var model = new Model(unformatted, mockMode);
+		var model = new Model(unformatted, Model.DEFAULT_CREATION_OPTIONS, null);
 		model.pushEditOperations([], operations.map(o => {
 			return {
 				range: Range.lift(o.range),
@@ -254,6 +253,19 @@ suite('JSON - formatter', () => {
 
 		format(content, expected);
 	});
+	test('single line comment on same line 2', () => {
+		var content = [
+			'{ //comment',
+			'}'
+		].join('\n');
+
+		var expected = [
+			'{ //comment',
+			'}'
+		].join('\n');
+
+		format(content, expected);
+	});
 	test('block comment on same line', () => {
 		var content = [
 			'{      "a": {}, /*comment*/    ',
@@ -305,6 +317,19 @@ suite('JSON - formatter', () => {
 			'  "a": {} /*comment*/, /*comment*/',
 			'  /*comment*/ "b": {} /*comment*/',
 			'}',
+		].join('\n');
+
+		format(content, expected);
+	});
+	test('multiple mixed comments on same line', () => {
+		var content = [
+			'[ /*comment*/  /*comment*/   // comment ',
+			']'
+		].join('\n');
+
+		var expected = [
+			'[ /*comment*/ /*comment*/ // comment ',
+			']'
 		].join('\n');
 
 		format(content, expected);

@@ -4,11 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import DomUtils = require('vs/base/browser/dom');
-
+import * as editorCommon from 'vs/editor/common/editorCommon';
 import {ViewPart} from 'vs/editor/browser/view/viewPart';
-import EditorBrowser = require('vs/editor/browser/editorBrowser');
-import EditorCommon = require('vs/editor/common/editorCommon');
+import {FastDomNode, createFastDomNode} from 'vs/base/browser/styleMutator';
+import {ViewContext} from 'vs/editor/common/view/viewContext';
+import {ViewLinesViewportData} from 'vs/editor/common/viewLayout/viewLinesViewportData';
 
 export interface IVisibleLineData {
 	getDomNode(): HTMLElement;
@@ -19,12 +19,12 @@ export interface IVisibleLineData {
 	onLinesDeletedAbove(): void;
 	onLineChangedAbove(): void;
 	onTokensChanged(): void;
-	onConfigurationChanged(e:EditorCommon.IConfigurationChangedEvent): void;
+	onConfigurationChanged(e:editorCommon.IConfigurationChangedEvent): void;
 
 	getLineOuterHTML(out:string[], lineNumber: number, deltaTop: number): void;
 	getLineInnerHTML(lineNumber: number): string;
 
-	shouldUpdateHTML(lineNumber:number, inlineDecorations:EditorCommon.IModelDecoration[]): boolean;
+	shouldUpdateHTML(startLineNumber:number, lineNumber:number, inlineDecorations:editorCommon.IModelDecoration[]): boolean;
 	layoutLine(lineNumber: number, deltaTop:number): void;
 }
 
@@ -33,29 +33,34 @@ interface IRendererContext {
 	rendLineNumberStart: number;
 	lines: IVisibleLineData[];
 	linesLength: number;
-	getInlineDecorationsForLineInViewport(lineNumber:number): EditorCommon.IModelDecoration[];
+	getInlineDecorationsForLineInViewport(lineNumber:number): editorCommon.IModelDecoration[];
 	viewportTop: number;
 	viewportHeight: number;
 	scrollDomNode: HTMLElement;
 	scrollDomNodeIsAbove: boolean;
 }
 
-export class ViewLayer extends ViewPart {
+export abstract class ViewLayer extends ViewPart {
 
-	public domNode: HTMLElement;
+	protected domNode: FastDomNode;
 
-	_lines:IVisibleLineData[];
-	_rendLineNumberStart:number;
+	protected _lines:IVisibleLineData[];
+	protected _rendLineNumberStart:number;
 
 	private _renderer: ViewLayerRenderer;
+	private _scrollDomNode: HTMLElement;
+	private _scrollDomNodeIsAbove: boolean;
 
-	constructor(context:EditorBrowser.IViewContext) {
+	constructor(context:ViewContext) {
 		super(context);
 
 		this.domNode = this._createDomNode();
 
 		this._lines = [];
 		this._rendLineNumberStart = 1;
+
+		this._scrollDomNode = null;
+		this._scrollDomNodeIsAbove = false;
 
 		this._renderer = new ViewLayerRenderer(
 			() => this._createLine(),
@@ -74,19 +79,19 @@ export class ViewLayer extends ViewPart {
 
 	// ---- begin view event handlers
 
-	public onConfigurationChanged(e:EditorCommon.IConfigurationChangedEvent): boolean {
+	public onConfigurationChanged(e:editorCommon.IConfigurationChangedEvent): boolean {
 		for (var i = 0; i < this._lines.length; i++) {
 			this._lines[i].onConfigurationChanged(e);
 		}
 		return true;
 	}
 
-	public onLayoutChanged(layoutInfo:EditorCommon.IEditorLayoutInfo): boolean {
+	public onLayoutChanged(layoutInfo:editorCommon.EditorLayoutInfo): boolean {
 		return true;
 	}
 
-	public onScrollChanged(e:EditorCommon.IScrollEvent): boolean {
-		return e.vertical;
+	public onScrollChanged(e:editorCommon.IScrollEvent): boolean {
+		return e.scrollTopChanged;
 	}
 
 	public onZonesChanged(): boolean {
@@ -96,11 +101,12 @@ export class ViewLayer extends ViewPart {
 	public onModelFlushed(): boolean {
 		this._lines = [];
 		this._rendLineNumberStart = 1;
-		DomUtils.clearNode(this.domNode);
+		this._scrollDomNode = null;
+		// No need to clear the dom node because a full .innerHTML will occur in ViewLayerRenderer._render
 		return true;
 	}
 
-	public onModelLinesDeleted(e:EditorCommon.IViewLinesDeletedEvent): boolean {
+	public onModelLinesDeleted(e:editorCommon.IViewLinesDeletedEvent): boolean {
 		var from = Math.max(e.fromLineNumber - this._rendLineNumberStart, 0);
 		var to = Math.min(e.toLineNumber - this._rendLineNumberStart, this._lines.length - 1);
 		var i:number;
@@ -124,7 +130,7 @@ export class ViewLayer extends ViewPart {
 			for (i = from; i <= to; i++) {
 				var lineDomNode = this._lines[i].getDomNode();
 				if (lineDomNode) {
-					this.domNode.removeChild(lineDomNode);
+					this.domNode.domNode.removeChild(lineDomNode);
 				}
 			}
 			// Remove from array
@@ -139,7 +145,7 @@ export class ViewLayer extends ViewPart {
 		return true;
 	}
 
-	public onModelLineChanged(e:EditorCommon.IViewLineChangedEvent): boolean {
+	public onModelLineChanged(e:editorCommon.IViewLineChangedEvent): boolean {
 		var lineIndex = e.lineNumber - this._rendLineNumberStart,
 			shouldRender = false;
 
@@ -157,7 +163,7 @@ export class ViewLayer extends ViewPart {
 		return shouldRender;
 	}
 
-	public onModelLinesInserted(e:EditorCommon.IViewLinesInsertedEvent): boolean {
+	public onModelLinesInserted(e:editorCommon.IViewLinesInsertedEvent): boolean {
 		var i:number;
 
 		if (e.fromLineNumber <= this._rendLineNumberStart) {
@@ -198,7 +204,7 @@ export class ViewLayer extends ViewPart {
 				// Remove from DOM
 				var lineDomNode = lastLine.getDomNode();
 				if (lineDomNode) {
-					this.domNode.removeChild(lineDomNode);
+					this.domNode.domNode.removeChild(lineDomNode);
 				}
 			}
 		}
@@ -211,7 +217,11 @@ export class ViewLayer extends ViewPart {
 		return true;
 	}
 
-	public onModelTokensChanged(e:EditorCommon.IViewTokensChangedEvent): boolean {
+	public onModelTokensChanged(e:editorCommon.IViewTokensChangedEvent): boolean {
+		if (this._lines.length === 0) {
+			return false;
+		}
+
 		var changedFromIndex = e.fromLineNumber - this._rendLineNumberStart;
 		var changedToIndex = e.toLineNumber - this._rendLineNumberStart;
 
@@ -234,12 +244,10 @@ export class ViewLayer extends ViewPart {
 
 
 	// ---- end view event handlers
-	private _scrollDomNode: HTMLElement = null;
-	private _scrollDomNodeIsAbove: boolean = false;
-	public _renderLines(linesViewportData:EditorCommon.IViewLinesViewportData): void {
+	public _renderLines(linesViewportData:ViewLinesViewportData): void {
 
 		var ctx: IRendererContext = {
-			domNode: this.domNode,
+			domNode: this.domNode.domNode,
 			rendLineNumberStart: this._rendLineNumberStart,
 			lines: this._lines,
 			linesLength: this._lines.length,
@@ -259,12 +267,12 @@ export class ViewLayer extends ViewPart {
 		this._scrollDomNodeIsAbove = resCtx.scrollDomNodeIsAbove;
 	}
 
-	public _createDomNode(): HTMLElement {
-		var domNode = document.createElement('div');
-		domNode.className = 'view-layer';
-		domNode.style.position = 'absolute';
-		domNode.setAttribute('role', 'presentation');
-		domNode.setAttribute('aria-hidden', 'true');
+	public _createDomNode(): FastDomNode {
+		let domNode = createFastDomNode(document.createElement('div'));
+		domNode.setClassName('view-layer');
+		domNode.setPosition('absolute');
+		domNode.domNode.setAttribute('role', 'presentation');
+		domNode.domNode.setAttribute('aria-hidden', 'true');
 		return domNode;
 	}
 
@@ -493,7 +501,54 @@ class ViewLayerRenderer {
 		ctx.lines.splice(removeIndex, removeCount);
 	}
 
+	private static _resolveInlineDecorations(ctx: IRendererContext): editorCommon.IModelDecoration[][] {
+		let result: editorCommon.IModelDecoration[][] = [];
+		for (let i = 0, len = ctx.linesLength; i < len; i++) {
+			let lineNumber = i + ctx.rendLineNumberStart;
+			result[i] = ctx.getInlineDecorationsForLineInViewport(lineNumber);
+		}
+		return result;
+	}
+
+	private _finishRenderingNewLines(ctx: IRendererContext, domNodeIsEmpty:boolean, newLinesHTML: string[], wasNew: boolean[]): void {
+		var lastChild = <HTMLElement>ctx.domNode.lastChild;
+		if (domNodeIsEmpty || !lastChild) {
+			ctx.domNode.innerHTML = this._extraDomNodeHTML() + newLinesHTML.join('');
+		} else {
+			lastChild.insertAdjacentHTML('afterend', newLinesHTML.join(''));
+		}
+
+		var currChild = <HTMLElement>ctx.domNode.lastChild;
+		for (let i = ctx.linesLength - 1; i >= 0; i--) {
+			let line = ctx.lines[i];
+			if (wasNew[i]) {
+				line.setDomNode(currChild);
+				currChild = <HTMLElement>currChild.previousSibling;
+			}
+		}
+	}
+
+	private _finishRenderingInvalidLines(ctx: IRendererContext, invalidLinesHTML: string[], wasInvalid: boolean[]): void {
+		var hugeDomNode = document.createElement('div');
+
+		hugeDomNode.innerHTML = invalidLinesHTML.join('');
+
+		var lineDomNode:HTMLElement,
+			source:HTMLElement;
+		for (let i = 0; i < ctx.linesLength; i++) {
+			let line = ctx.lines[i];
+			if (wasInvalid[i]) {
+				source = <HTMLElement>hugeDomNode.firstChild;
+				lineDomNode = line.getDomNode();
+				lineDomNode.parentNode.replaceChild(source, lineDomNode);
+				line.setDomNode(source);
+			}
+		}
+	}
+
 	private _finishRendering(ctx: IRendererContext, domNodeIsEmpty:boolean, deltaTop:number[]): void {
+
+		let inlineDecorations = ViewLayerRenderer._resolveInlineDecorations(ctx);
 
 		var i: number,
 			len: number,
@@ -510,7 +565,7 @@ class ViewLayerRenderer {
 			line = ctx.lines[i];
 			lineNumber = i + ctx.rendLineNumberStart;
 
-			if (line.shouldUpdateHTML(lineNumber, ctx.getInlineDecorationsForLineInViewport(lineNumber))) {
+			if (line.shouldUpdateHTML(ctx.rendLineNumberStart, lineNumber, inlineDecorations[i])) {
 				var lineDomNode = line.getDomNode();
 				if (!lineDomNode) {
 					// Line is new
@@ -528,40 +583,11 @@ class ViewLayerRenderer {
 		}
 
 		if (hadNewLine) {
-			var lastChild = <HTMLElement>ctx.domNode.lastChild;
-			if (domNodeIsEmpty || !lastChild) {
-				ctx.domNode.innerHTML = this._extraDomNodeHTML() + newLinesHTML.join('');
-			} else {
-				lastChild.insertAdjacentHTML('afterend', newLinesHTML.join(''));
-			}
-
-			var currChild = <HTMLElement>ctx.domNode.lastChild;
-			for (i = ctx.linesLength - 1; i >= 0; i--) {
-				line = ctx.lines[i];
-				if (wasNew[i]) {
-					line.setDomNode(currChild);
-					currChild = <HTMLElement>currChild.previousSibling;
-				}
-			}
+			this._finishRenderingNewLines(ctx, domNodeIsEmpty, newLinesHTML, wasNew);
 		}
 
 		if (hadInvalidLine) {
-
-			var hugeDomNode = document.createElement('div');
-
-			hugeDomNode.innerHTML = invalidLinesHTML.join('');
-
-			var lineDomNode:HTMLElement,
-				source:HTMLElement;
-			for (i = 0; i < ctx.linesLength; i++) {
-				line = ctx.lines[i];
-				if (wasInvalid[i]) {
-					source = <HTMLElement>hugeDomNode.firstChild;
-					lineDomNode = line.getDomNode();
-					lineDomNode.parentNode.replaceChild(source, lineDomNode);
-					line.setDomNode(source);
-				}
-			}
+			this._finishRenderingInvalidLines(ctx, invalidLinesHTML, wasInvalid);
 		}
 	}
 }

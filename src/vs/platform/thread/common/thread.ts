@@ -7,15 +7,10 @@
 import {TPromise} from 'vs/base/common/winjs.base';
 import descriptors = require('vs/platform/instantiation/common/descriptors');
 import instantiation = require('vs/platform/instantiation/common/instantiation');
-import {IDisposable} from 'vs/base/common/lifecycle';
 
 // --- thread service (web workers)
 
 export const IThreadService = instantiation.createDecorator<IThreadService>('threadService');
-
-export interface IDynamicProxy<T> extends IDisposable {
-	getProxyDefinition(): T;
-}
 
 export interface IThreadService {
 	serviceId: instantiation.ServiceIdentifier<any>;
@@ -23,30 +18,15 @@ export interface IThreadService {
 	// --- BEGIN deprecated methods
 	isInMainThread: boolean;
 
-	ensureWorkers(): void;
-	addStatusListener(listener: IThreadServiceStatusListener): void;
-	removeStatusListener(listener: IThreadServiceStatusListener): void;
+	OneWorker(obj: IThreadSynchronizableObject, methodName: string, target: Function, param: any[], affinity: ThreadAffinity): TPromise<any>;
+	AllWorkers(obj: IThreadSynchronizableObject, methodName: string, target: Function, param: any[]): TPromise<any>;
 
-	MainThread(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, param: any[]): TPromise<any>;
-	OneWorker(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, param: any[], affinity: ThreadAffinity): TPromise<any>;
-	AllWorkers(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, param: any[]): TPromise<any>;
-	Everywhere(obj: IThreadSynchronizableObject<any>, methodName: string, target: Function, param: any[]): any;
-
-	createInstance<T extends IThreadSynchronizableObject<any>>(ctor: instantiation.INewConstructorSignature0<T>): T;
-	createInstance<A1, T extends IThreadSynchronizableObject<any>>(ctor: instantiation.INewConstructorSignature1<A1, T>, a1: A1): T;
-	createInstance<A1, A2, T extends IThreadSynchronizableObject<any>>(ctor: instantiation.INewConstructorSignature2<A1, A2, T>, a1: A1, a2: A2): T;
-	createInstance<A1, A2, A3, T extends IThreadSynchronizableObject<any>>(ctor: instantiation.INewConstructorSignature3<A1, A2, A3, T>, a1: A1, a2: A2, a3: A3): T;
-
-	createInstance<T extends IThreadSynchronizableObject<any>>(descriptor: descriptors.AsyncDescriptor0<T>): T;
-	createInstance<A1, T extends IThreadSynchronizableObject<any>>(descriptor: descriptors.AsyncDescriptor1<A1, T>, a1: A1): T;
-	createInstance<A1, A2, T extends IThreadSynchronizableObject<any>>(descriptor: descriptors.AsyncDescriptor2<A1, A2, T>, a1: A1, a2: A2): T;
-	createInstance<A1, A2, A3, T extends IThreadSynchronizableObject<any>>(descriptor: descriptors.AsyncDescriptor3<A1, A2, A3, T>, a1: A1, a2: A2, a3: A3): T;
-
-	registerInstance<T extends IThreadSynchronizableObject<any>>(instance: T): void;
+	createInstance<A1, T extends IThreadSynchronizableObject>(ctor: instantiation.IConstructorSignature1<A1, T>, a1: A1): T;
+	createInstance<A1, T extends IThreadSynchronizableObject>(descriptor: descriptors.AsyncDescriptor1<A1, T>, a1: A1): TPromise<T>;
 
 	// --- END deprecated methods
 
-	getRemotable<T>(ctor: instantiation.INewConstructorSignature0<T>): T;
+	getRemotable<T>(ctor: instantiation.IConstructorSignature0<T>): T;
 
 	registerRemotableInstance(ctor: any, instance: any): void;
 }
@@ -68,7 +48,7 @@ export class Remotable {
 
 	public static Registry = {
 		MainContext: <IRemotableCtorMap>Object.create(null),
-		PluginHostContext: <IRemotableCtorMap>Object.create(null),
+		ExtHostContext: <IRemotableCtorMap>Object.create(null),
 		WorkerContext: <IRemotableCtorAffinityMap>Object.create(null),
 	};
 
@@ -84,10 +64,10 @@ export class Remotable {
 		};
 	}
 
-	public static PluginHostContext(identifier: string) {
+	public static ExtHostContext(identifier: string) {
 		return function(target: Function) {
 			Remotable._ensureUnique(identifier);
-			Remotable.Registry.PluginHostContext[identifier] = target;
+			Remotable.Registry.ExtHostContext[identifier] = target;
 			target[Remotable.PROP_NAME] = identifier;
 		};
 	}
@@ -104,22 +84,18 @@ export class Remotable {
 	}
 
 	private static _ensureUnique(identifier: string): void {
-		if (Remotable.Registry.MainContext[identifier] || Remotable.Registry.PluginHostContext[identifier] || Remotable.Registry.WorkerContext[identifier]) {
+		if (Remotable.Registry.MainContext[identifier] || Remotable.Registry.ExtHostContext[identifier] || Remotable.Registry.WorkerContext[identifier]) {
 			throw new Error('Duplicate Remotable identifier found');
 		}
 	}
 }
 
-export interface IThreadSynchronizableObject<S> {
+export interface IThreadSynchronizableObject {
 	getId(): string;
 
 	creationDone?: () => void;
 
 	asyncCtor?: () => TPromise<void>;
-
-	getSerializableState?: () => S;
-
-	setData?: (data: S) => void;
 }
 
 export enum ThreadAffinity {
@@ -134,16 +110,4 @@ export enum ThreadAffinity {
 	Group8 = 8,
 	Group9 = 9,
 	All = 10
-}
-
-export interface IWorkerStatus {
-	queueSize: number;
-}
-
-export interface IThreadServiceStatus {
-	workers: IWorkerStatus[];
-}
-
-export interface IThreadServiceStatusListener {
-	onThreadServiceStatus(status: IThreadServiceStatus): void;
 }

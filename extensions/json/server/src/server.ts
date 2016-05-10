@@ -9,11 +9,11 @@ import {
 	createConnection, IConnection,
 	TextDocuments, ITextDocument, Diagnostic, DiagnosticSeverity,
 	InitializeParams, InitializeResult, TextDocumentIdentifier, TextDocumentPosition, CompletionList,
-	Hover, SymbolInformation, DocumentFormattingParams,
+	CompletionItem, Hover, SymbolInformation, DocumentFormattingParams,
 	DocumentRangeFormattingParams, NotificationType, RequestType
 } from 'vscode-languageserver';
 
-import {xhr, IXHROptions, IXHRResponse, configure as configureHttpRequests} from './utils/httpRequest';
+import {xhr, XHROptions, XHRResponse, configure as configureHttpRequests} from 'request-light';
 import path = require('path');
 import fs = require('fs');
 import URI from './utils/uri';
@@ -22,14 +22,16 @@ import {JSONSchemaService, ISchemaAssociations} from './jsonSchemaService';
 import {parse as parseJSON, ObjectASTNode, JSONDocument} from './jsonParser';
 import {JSONCompletion} from './jsonCompletion';
 import {JSONHover} from './jsonHover';
-import {IJSONSchema} from './json-toolbox/jsonSchema';
+import {IJSONSchema} from './jsonSchema';
 import {JSONDocumentSymbols} from './jsonDocumentSymbols';
 import {format as formatJSON} from './jsonFormatter';
 import {schemaContributions} from './configuration';
-import {BowerJSONContribution} from './jsoncontributions/bowerJSONContribution';
-import {PackageJSONContribution} from './jsoncontributions/packageJSONContribution';
 import {ProjectJSONContribution} from './jsoncontributions/projectJSONContribution';
 import {GlobPatternContribution} from './jsoncontributions/globPatternContribution';
+import {FileAssociationContribution} from './jsoncontributions/fileAssociationContribution';
+
+import * as nls from 'vscode-nls';
+nls.config(process.env['VSCODE_NLS_CONFIG']);
 
 namespace TelemetryNotification {
 	export const type: NotificationType<{ key: string, data: any }> = { get method() { return 'telemetry'; } };
@@ -54,16 +56,19 @@ let documents: TextDocuments = new TextDocuments();
 // for open, change and close text document events
 documents.listen(connection);
 
+const filesAssociationContribution = new FileAssociationContribution();
+
 // After the server has started the client sends an initilize request. The server receives
 // in the passed params the rootPath of the workspace plus the client capabilites.
 let workspaceRoot: URI;
 connection.onInitialize((params: InitializeParams): InitializeResult => {
 	workspaceRoot = URI.parse(params.rootPath);
+	filesAssociationContribution.setLanguageIds(params.initializationOptions.languageIds);
 	return {
 		capabilities: {
 			// Tell the client that the server works in FULL text document sync mode
 			textDocumentSync: documents.syncKind,
-			completionProvider: { resolveProvider: false },
+			completionProvider: { resolveProvider: true },
 			hoverProvider: true,
 			documentSymbolProvider: true,
 			documentRangeFormattingProvider: true,
@@ -87,10 +92,10 @@ let telemetry = {
 	}
 };
 
-let request = (options: IXHROptions): Thenable<IXHRResponse>  => {
+let request = (options: XHROptions): Thenable<XHRResponse> => {
 	if (Strings.startsWith(options.url, 'file://')) {
 		let fsPath = URI.parse(options.url).fsPath;
-		return new Promise<IXHRResponse>((c, e) => {
+		return new Promise<XHRResponse>((c, e) => {
 			fs.readFile(fsPath, 'UTF-8', (err, result) => {
 				err ? e({ responseText: '', status: 404 }) : c({ responseText: result.toString(), status: 200 });
 			});
@@ -113,15 +118,14 @@ let request = (options: IXHROptions): Thenable<IXHRResponse>  => {
 
 let contributions = [
 	new ProjectJSONContribution(request),
-	new PackageJSONContribution(request),
-	new BowerJSONContribution(request),
-	new GlobPatternContribution()
+	new GlobPatternContribution(),
+	filesAssociationContribution
 ];
 
 let jsonSchemaService = new JSONSchemaService(request, workspaceContext, telemetry);
 jsonSchemaService.setSchemaContributions(schemaContributions);
 
-let jsonCompletion = new JSONCompletion(jsonSchemaService, contributions);
+let jsonCompletion = new JSONCompletion(jsonSchemaService, connection.console, contributions);
 let jsonHover = new JSONHover(jsonSchemaService, contributions);
 let jsonDocumentSymbols = new JSONDocumentSymbols();
 
@@ -206,6 +210,12 @@ function updateConfiguration() {
 
 
 function validateTextDocument(textDocument: ITextDocument): void {
+	if (textDocument.getText().length === 0) {
+		// ignore empty documents
+		connection.sendDiagnostics({ uri: textDocument.uri, diagnostics: [] });
+		return;
+	}
+
 	let jsonDocument = getJSONDocument(textDocument);
 	jsonSchemaService.getSchemaForResource(textDocument.uri, jsonDocument).then(schema => {
 		if (schema) {
@@ -267,6 +277,10 @@ connection.onCompletion((textDocumentPosition: TextDocumentPosition): Thenable<C
 	let document = documents.get(textDocumentPosition.uri);
 	let jsonDocument = getJSONDocument(document);
 	return jsonCompletion.doSuggest(document, textDocumentPosition, jsonDocument);
+});
+
+connection.onCompletionResolve((item: CompletionItem) : Thenable<CompletionItem> => {
+	return jsonCompletion.doResolve(item);
 });
 
 connection.onHover((textDocumentPosition: TextDocumentPosition): Thenable<Hover> => {

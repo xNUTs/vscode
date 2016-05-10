@@ -10,11 +10,10 @@ import {Promise, TPromise} from 'vs/base/common/winjs.base';
 import EventEmitter = require('vs/base/common/eventEmitter');
 import Paths = require('vs/base/common/paths');
 import URI from 'vs/base/common/uri';
-import MainTelemetryService = require('vs/platform/telemetry/browser/mainTelemetryService');
+import {NullTelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import Storage = require('vs/workbench/common/storage');
 import WorkbenchEditorCommon = require('vs/workbench/common/editor');
 import Event from 'vs/base/common/event';
-import LifecycleService = require('vs/platform/lifecycle/common/baseLifecycleService');
 import Types = require('vs/base/common/types');
 import Severity from 'vs/base/common/severity';
 import http = require('vs/base/common/http');
@@ -26,12 +25,9 @@ import PartService = require('vs/workbench/services/part/common/partService');
 import WorkspaceContextService = require('vs/workbench/services/workspace/common/contextService');
 import {IEditorInput, IEditorModel, Position, IEditor, IResourceInput, ITextEditorModel} from 'vs/platform/editor/common/editor';
 import {IEventService} from 'vs/platform/event/common/event';
-import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
 import {IMessageService, IConfirmation} from 'vs/platform/message/common/message';
-import Lifecycle = require('vs/base/common/lifecycle');
 import {BaseRequestService} from 'vs/platform/request/common/baseRequestService';
-import {ITelemetryService, ITelemetryInfo} from 'vs/platform/telemetry/common/telemetry';
 import {IWorkspace, IConfiguration} from 'vs/platform/workspace/common/workspace';
 
 export const TestWorkspace: IWorkspace = {
@@ -122,52 +118,6 @@ export class TestMessageService implements IMessageService {
 	public confirm(confirmation: IConfirmation): boolean {
 		return false;
 	}
-
-	public setStatusMessage(message: string, autoDisposeAfter: number = -1): Lifecycle.IDisposable {
-		return {
-			dispose: () => { /* Nothing to do here */ }
-		};
-	}
-}
-
-export class TestTelemetryService implements ITelemetryService {
-	public serviceId = ITelemetryService;
-
-	getSessionId(): string {
-		return null;
-	}
-
-	getMachineId(): string {
-		return null;
-	}
-
-	getInstanceId(): string {
-		return null;
-	}
-
-	getTelemetryInfo(): TPromise<ITelemetryInfo> {
-		return TPromise.as(null);
-	}
-
-	log(eventName: string, data?: any): void { }
-	publicLog(eventName: string, data?: any): void { }
-
-	start(name: string, data?: any, isPublic?: boolean): any {
-		return null;
-	}
-
-	getAppendersCount(): number {
-		return -1;
-	}
-
-	getAppenders(): any[] {
-		return [];
-	}
-
-	addTelemetryAppender(appender): void { }
-	removeTelemetryAppender(appender): void { }
-	dispose(): void { }
-	setInstantiationService(instantiationService: IInstantiationService) { }
 }
 
 export class TestPartService implements PartService.IPartService {
@@ -216,8 +166,6 @@ export class TestEventService extends EventEmitter.EventEmitter implements IEven
 	public serviceId = IEventService;
 }
 
-export class TestLifecycleService extends LifecycleService.BaseLifecycleService { }
-
 export class TestStorageService extends EventEmitter.EventEmitter implements IStorageService {
 	public serviceId = IStorageService;
 
@@ -258,7 +206,7 @@ export class TestStorageService extends EventEmitter.EventEmitter implements ISt
 export class TestRequestService extends BaseRequestService {
 
 	constructor(workspace = TestWorkspace) {
-		super(new TestContextService(), new MainTelemetryService.MainTelemetryService());
+		super(new TestContextService(), NullTelemetryService);
 	}
 }
 
@@ -274,7 +222,7 @@ export interface IMockRequestHandler {
 export class MockRequestService extends BaseRequestService {
 
 	constructor(workspace: any, private handler: IMockRequestHandler) {
-		super(new TestContextService(), new MainTelemetryService.MainTelemetryService());
+		super(new TestContextService(), NullTelemetryService);
 	}
 
 	public makeRequest(options: http.IXHROptions): TPromise<http.IXHRResponse> {
@@ -463,31 +411,31 @@ export class TestQuickOpenService implements QuickOpenService.IQuickOpenService 
 		return null;
 	}
 
-	public removeEditorHistoryEntry(input: WorkbenchEditorCommon.EditorInput): void {}
-	public dispose() {}
-	public quickNavigate(): void {}
+	public removeEditorHistoryEntry(input: WorkbenchEditorCommon.EditorInput): void { }
+	public dispose() { }
+	public quickNavigate(): void { }
 }
 
 export const TestFileService = {
-	resolveContent: function(resource) {
+	resolveContent: function (resource) {
 		return TPromise.as({
 			resource: resource,
 			value: 'Hello Html',
 			etag: 'index.txt',
 			mime: 'text/plain',
-			charset: 'utf8',
+			encoding: 'utf8',
 			mtime: new Date().getTime(),
 			name: Paths.basename(resource.fsPath)
 		});
 	},
 
-	updateContent: function(res) {
+	updateContent: function (res) {
 		return TPromise.timeout(1).then(() => {
 			return {
 				resource: res,
 				etag: 'index.txt',
 				mime: 'text/plain',
-				charset: 'utf8',
+				encoding: 'utf8',
 				mtime: new Date().getTime(),
 				name: Paths.basename(res.fsPath)
 			};
@@ -498,11 +446,15 @@ export const TestFileService = {
 export class TestConfigurationService extends EventEmitter.EventEmitter implements IConfigurationService {
 	public serviceId = IConfigurationService;
 
-	public loadConfiguration(section?:string):TPromise<any> {
-		return TPromise.as({});
+	public loadConfiguration<T>(section?: string): TPromise<T> {
+		return TPromise.as(this.getConfiguration());
 	}
 
-	public hasWorkspaceConfiguration():boolean {
+	public getConfiguration(): any {
+		return {};
+	}
+
+	public hasWorkspaceConfiguration(): boolean {
 		return false;
 	}
 

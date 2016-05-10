@@ -4,39 +4,119 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import 'vs/languages/html/common/html.contribution';
-import 'vs/languages/javascript/common/javascript.contribution';
 import assert = require('assert');
 import EditorCommon = require('vs/editor/common/editorCommon');
 import Modes = require('vs/editor/common/modes');
-import htmlMode = require('vs/languages/html/common/html');
 import modesUtil = require('vs/editor/test/common/modesUtil');
 import {Model} from 'vs/editor/common/model/model';
-import Supports = require('vs/editor/common/modes/supports');
 import {getTag, DELIM_END, DELIM_START, DELIM_ASSIGN, ATTRIB_NAME, ATTRIB_VALUE, COMMENT, DELIM_COMMENT, DELIM_DOCTYPE, DOCTYPE} from 'vs/languages/html/common/htmlTokenTypes';
 import {getRawEnterActionAtPosition} from 'vs/editor/common/modes/supports/onEnter';
 import {TextModelWithTokens} from 'vs/editor/common/model/textModelWithTokens';
 import {TextModel} from 'vs/editor/common/model/textModel';
 import {Range} from 'vs/editor/common/core/range';
+import {MockModeService} from 'vs/editor/test/common/mocks/mockModeService';
+import {NULL_THREAD_SERVICE} from 'vs/platform/test/common/nullThreadService';
+import {IThreadService} from 'vs/platform/thread/common/thread';
+import {IModeService} from 'vs/editor/common/services/modeService';
+import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
+import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
+import {HTMLMode} from 'vs/languages/html/common/html';
+import htmlWorker = require('vs/languages/html/common/htmlWorker');
+import {MockTokenizingMode} from 'vs/editor/test/common/mocks/mockMode';
+import {RichEditSupport} from 'vs/editor/common/modes/supports/richEditSupport';
+
+class MockJSMode extends MockTokenizingMode {
+
+	public richEditSupport: Modes.IRichEditSupport;
+
+	constructor() {
+		super('js', 'mock-js');
+
+		this.richEditSupport = new RichEditSupport(this.getId(), null, {
+			brackets: [
+				['(', ')'],
+				['{', '}'],
+				['[', ']']
+			],
+
+			onEnterRules: [
+				{
+					// e.g. /** | */
+					beforeText: /^\s*\/\*\*(?!\/)([^\*]|\*(?!\/))*$/,
+					afterText: /^\s*\*\/$/,
+					action: { indentAction: Modes.IndentAction.IndentOutdent, appendText: ' * ' }
+				},
+				{
+					// e.g. /** ...|
+					beforeText: /^\s*\/\*\*(?!\/)([^\*]|\*(?!\/))*$/,
+					action: { indentAction: Modes.IndentAction.None, appendText: ' * ' }
+				},
+				{
+					// e.g.  * ...|
+					beforeText: /^(\t|(\ \ ))*\ \*(\ ([^\*]|\*(?!\/))*)?$/,
+					action: { indentAction: Modes.IndentAction.None, appendText: '* ' }
+				},
+				{
+					// e.g.  */|
+					beforeText: /^(\t|(\ \ ))*\ \*\/\s*$/,
+					action: { indentAction: Modes.IndentAction.None, removeText: 1 }
+				}
+			]
+		});
+	}
+}
+
+class HTMLMockModeService extends MockModeService {
+	isRegisteredMode(mimetypeOrModeId: string): boolean {
+		if (mimetypeOrModeId === 'text/javascript') {
+			return true;
+		}
+		if (mimetypeOrModeId === 'text/plain') {
+			return false;
+		}
+		throw new Error('Not implemented');
+	}
+
+	getMode(commaSeparatedMimetypesOrCommaSeparatedIds: string): Modes.IMode {
+		if (commaSeparatedMimetypesOrCommaSeparatedIds === 'text/javascript') {
+			return new MockJSMode();
+		}
+		if (commaSeparatedMimetypesOrCommaSeparatedIds === 'text/plain') {
+			return null;
+		}
+		throw new Error('Not implemented');
+	}
+}
 
 suite('Colorizing - HTML', () => {
 
-	var tokenizationSupport: Modes.ITokenizationSupport;
-	var _mode: Modes.IMode;
+	let tokenizationSupport: Modes.ITokenizationSupport;
+	let _mode: Modes.IMode;
 
-	suiteSetup((done) => {
-		modesUtil.load('html').then(mode => {
-			tokenizationSupport = mode.tokenizationSupport;
-			_mode = mode;
-			done();
-		});
-	});
+	(function() {
+		let threadService = NULL_THREAD_SERVICE;
+		let modeService = new HTMLMockModeService();
+		let services = new ServiceCollection();
+		services.set(IThreadService, threadService);
+		services.set(IModeService, modeService);
+		let inst = new InstantiationService(services);
+		threadService.setInstantiationService(inst);
+
+		_mode = new HTMLMode<htmlWorker.HTMLWorker>(
+			{ id: 'html' },
+			inst,
+			modeService,
+			threadService
+		);
+
+		tokenizationSupport = _mode.tokenizationSupport;
+	})();
 
 	test('Open Start Tag #1', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') }
 			]}
 		]);
@@ -56,7 +136,7 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '< abc',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: '' }
 			]}
 		]);
@@ -66,7 +146,7 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '< abc>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: '' }
 			]}
 		]);
@@ -77,7 +157,7 @@ suite('Colorizing - HTML', () => {
 			line: 'i <len;',
 			tokens: [
 				{ startIndex:0, type: '' },
-				{ startIndex:2, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:2, type: DELIM_START },
 				{ startIndex:3, type: getTag('len') },
 				{ startIndex:6, type: '' }
 			]}
@@ -88,7 +168,7 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open }
+				{ startIndex:0, type: DELIM_START }
 			]}
 		]);
 	});
@@ -97,7 +177,7 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '</a',
 			tokens: [
-				{ startIndex:0, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_END },
 				{ startIndex:2, type: getTag('a') }
 			]}
 		]);
@@ -107,9 +187,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
-				{ startIndex:4, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:4, type: DELIM_START }
 			]}
 		]);
 	});
@@ -118,10 +198,10 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc >',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
-				{ startIndex:5, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:5, type: DELIM_START }
 			]}
 		]);
 	});
@@ -130,9 +210,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<foo:bar>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('foo-bar') },
-				{ startIndex:8, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:8, type: DELIM_START }
 			]}
 		]);
 	});
@@ -141,9 +221,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '</abc>',
 			tokens: [
-				{ startIndex:0, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_END },
 				{ startIndex:2, type: getTag('abc') },
-				{ startIndex:5, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:5, type: DELIM_END }
 			]}
 		]);
 	});
@@ -152,10 +232,10 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '</abc  >',
 			tokens: [
-				{ startIndex:0, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_END },
 				{ startIndex:2, type: getTag('abc') },
 				{ startIndex:5, type: '' },
-				{ startIndex:7, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:7, type: DELIM_END }
 			]}
 		]);
 	});
@@ -164,10 +244,10 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc />',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
-				{ startIndex:5, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:5, type: DELIM_START }
 			]}
 		]);
 	});
@@ -176,23 +256,17 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script type="text/javascript">var i= 10;</script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
 				{ startIndex:7, type: '' },
 				{ startIndex:8, type: ATTRIB_NAME },
 				{ startIndex:12, type: DELIM_ASSIGN },
 				{ startIndex:13, type: ATTRIB_VALUE },
-				{ startIndex:30, type: DELIM_START, bracket: Modes.Bracket.Close },
-				{ startIndex:31, type: 'keyword.js' },
-				{ startIndex:34, type: '' },
-				{ startIndex:35, type: 'identifier.js' },
-				{ startIndex:36, type: 'delimiter.js' },
-				{ startIndex:37, type: '' },
-				{ startIndex:38, type: 'number.js' },
-				{ startIndex:40, type: 'delimiter.js' },
-				{ startIndex:41, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:30, type: DELIM_START },
+				{ startIndex:31, type: 'mock-js' },
+				{ startIndex:41, type: DELIM_END },
 				{ startIndex:43, type: getTag('script') },
-				{ startIndex:49, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:49, type: DELIM_END }
 			]}
 		]);
 	});
@@ -201,29 +275,23 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script type="text/javascript">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
 				{ startIndex:7, type: '' },
 				{ startIndex:8, type: ATTRIB_NAME },
 				{ startIndex:12, type: DELIM_ASSIGN },
 				{ startIndex:13, type: ATTRIB_VALUE },
-				{ startIndex:30, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:30, type: DELIM_START }
 			]}, {
 			line: 'var i= 10;',
 			tokens: [
-				{ startIndex:0, type: 'keyword.js' },
-				{ startIndex:3, type: '' },
-				{ startIndex:4, type: 'identifier.js' },
-				{ startIndex:5, type: 'delimiter.js' },
-				{ startIndex:6, type: '' },
-				{ startIndex:7, type: 'number.js' },
-				{ startIndex:9, type: 'delimiter.js' }
+				{ startIndex:0, type: 'mock-js' },
 			]}, {
 			line: '</script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_END },
 				{ startIndex:2, type: getTag('script') },
-				{ startIndex:8, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:8, type: DELIM_END }
 			]}
 		]);
 	});
@@ -232,26 +300,20 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script type="text/javascript">var i= 10;',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
 				{ startIndex:7, type: '' },
 				{ startIndex:8, type: ATTRIB_NAME },
 				{ startIndex:12, type: DELIM_ASSIGN },
 				{ startIndex:13, type: ATTRIB_VALUE },
-				{ startIndex:30, type: DELIM_START, bracket: Modes.Bracket.Close },
-				{ startIndex:31, type: 'keyword.js' },
-				{ startIndex:34, type: '' },
-				{ startIndex:35, type: 'identifier.js' },
-				{ startIndex:36, type: 'delimiter.js' },
-				{ startIndex:37, type: '' },
-				{ startIndex:38, type: 'number.js' },
-				{ startIndex:40, type: 'delimiter.js' }
+				{ startIndex:30, type: DELIM_START },
+				{ startIndex:31, type: 'mock-js' },
 			]}, {
 			line: '</script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_END },
 				{ startIndex:2, type: getTag('script') },
-				{ startIndex:8, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:8, type: DELIM_END }
 			]}
 		]);
 	});
@@ -260,26 +322,20 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script type="text/javascript">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
 				{ startIndex:7, type: '' },
 				{ startIndex:8, type: ATTRIB_NAME },
 				{ startIndex:12, type: DELIM_ASSIGN },
 				{ startIndex:13, type: ATTRIB_VALUE },
-				{ startIndex:30, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:30, type: DELIM_START }
 			]}, {
 			line: 'var i= 10;</script>',
 			tokens: [
-				{ startIndex:0, type: 'keyword.js' },
-				{ startIndex:3, type: '' },
-				{ startIndex:4, type: 'identifier.js' },
-				{ startIndex:5, type: 'delimiter.js' },
-				{ startIndex:6, type: '' },
-				{ startIndex:7, type: 'number.js' },
-				{ startIndex:9, type: 'delimiter.js' },
-				{ startIndex:10, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: 'mock-js' },
+				{ startIndex:10, type: DELIM_END },
 				{ startIndex:12, type: getTag('script') },
-				{ startIndex:18, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:18, type: DELIM_END }
 			]}
 		]);
 	});
@@ -288,17 +344,17 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script type="text/plain">a\n<a</script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
 				{ startIndex:7, type: '' },
 				{ startIndex:8, type: ATTRIB_NAME },
 				{ startIndex:12, type: DELIM_ASSIGN },
 				{ startIndex:13, type: ATTRIB_VALUE },
-				{ startIndex:25, type: DELIM_START, bracket: Modes.Bracket.Close },
+				{ startIndex:25, type: DELIM_START },
 				{ startIndex:26, type: '' },
-				{ startIndex:30, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:30, type: DELIM_END },
 				{ startIndex:32, type: getTag('script') },
-				{ startIndex:38, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:38, type: DELIM_END }
 			]}
 		]);
 	});
@@ -307,20 +363,20 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script>a</script><script>b</script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
-				{ startIndex:7, type: DELIM_START, bracket: Modes.Bracket.Close },
-				{ startIndex:8, type: 'identifier.js' },
-				{ startIndex:9, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:7, type: DELIM_START },
+				{ startIndex:8, type: 'mock-js' },
+				{ startIndex:9, type: DELIM_END },
 				{ startIndex:11, type: getTag('script') },
-				{ startIndex:17, type: DELIM_END, bracket: Modes.Bracket.Close },
-				{ startIndex:18, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:17, type: DELIM_END },
+				{ startIndex:18, type: DELIM_START },
 				{ startIndex:19, type: getTag('script') },
-				{ startIndex:25, type: DELIM_START, bracket: Modes.Bracket.Close },
-				{ startIndex:26, type: 'identifier.js' },
-				{ startIndex:27, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:25, type: DELIM_START },
+				{ startIndex:26, type: 'mock-js' },
+				{ startIndex:27, type: DELIM_END },
 				{ startIndex:29, type: getTag('script') },
-				{ startIndex:35, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:35, type: DELIM_END }
 			]}
 		]);
 	});
@@ -329,16 +385,16 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script type="text/javascript"></script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
 				{ startIndex:7, type: '' },
 				{ startIndex:8, type: ATTRIB_NAME },
 				{ startIndex:12, type: DELIM_ASSIGN },
 				{ startIndex:13, type: ATTRIB_VALUE },
-				{ startIndex:30, type: DELIM_START, bracket: Modes.Bracket.Close },
-				{ startIndex:31, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:30, type: DELIM_START },
+				{ startIndex:31, type: DELIM_END },
 				{ startIndex:33, type: getTag('script') },
-				{ startIndex:39, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:39, type: DELIM_END }
 			]}
 		]);
 	});
@@ -347,19 +403,13 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script>var i= 10;</script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
-				{ startIndex:7, type: DELIM_START, bracket: Modes.Bracket.Close },
-				{ startIndex:8, type: 'keyword.js' },
-				{ startIndex:11, type: '' },
-				{ startIndex:12, type: 'identifier.js' },
-				{ startIndex:13, type: 'delimiter.js' },
-				{ startIndex:14, type: '' },
-				{ startIndex:15, type: 'number.js' },
-				{ startIndex:17, type: 'delimiter.js' },
-				{ startIndex:18, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:7, type: DELIM_START },
+				{ startIndex:8, type: 'mock-js' },
+				{ startIndex:18, type: DELIM_END },
 				{ startIndex:20, type: getTag('script') },
-				{ startIndex:26, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:26, type: DELIM_END }
 			]}
 		]);
 	});
@@ -368,7 +418,7 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<script type="text/javascript" src="main.js"></script>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('script') },
 				{ startIndex:7, type: '' },
 				{ startIndex:8, type: ATTRIB_NAME },
@@ -378,10 +428,10 @@ suite('Colorizing - HTML', () => {
 				{ startIndex:31, type: ATTRIB_NAME },
 				{ startIndex:34, type: DELIM_ASSIGN },
 				{ startIndex:35, type: ATTRIB_VALUE },
-				{ startIndex:44, type: DELIM_START, bracket: Modes.Bracket.Close },
-				{ startIndex:45, type: DELIM_END, bracket: Modes.Bracket.Open },
+				{ startIndex:44, type: DELIM_START },
+				{ startIndex:45, type: DELIM_END },
 				{ startIndex:47, type: getTag('script') },
-				{ startIndex:53, type: DELIM_END, bracket: Modes.Bracket.Close }
+				{ startIndex:53, type: DELIM_END }
 			]}
 		]);
 	});
@@ -390,13 +440,13 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo="bar">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
 				{ startIndex:8, type: DELIM_ASSIGN },
 				{ startIndex:9, type: ATTRIB_VALUE },
-				{ startIndex:14, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:14, type: DELIM_START }
 			]}
 		]);
 	});
@@ -405,37 +455,37 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo=\'bar\'>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
 				{ startIndex:8, type: DELIM_ASSIGN },
 				{ startIndex:9, type: ATTRIB_VALUE },
-				{ startIndex:14, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:14, type: DELIM_START }
 			]}
 		]);
 	});
 
-	test('Tag with empty atrributes', () => {
+	test('Tag with empty attributes', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo="">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
 				{ startIndex:8, type: DELIM_ASSIGN },
 				{ startIndex:9, type: ATTRIB_VALUE },
-				{ startIndex:11, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:11, type: DELIM_START }
 			]}
 		]);
 	});
 
 	test('Tag with Attributes', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
-			line: '<abc foo="bar" bar="foo">',
+			line: '<abc foo="bar" bar=\'foo\'>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
@@ -445,7 +495,26 @@ suite('Colorizing - HTML', () => {
 				{ startIndex:15, type: ATTRIB_NAME },
 				{ startIndex:18, type: DELIM_ASSIGN },
 				{ startIndex:19, type: ATTRIB_VALUE },
-				{ startIndex:24, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:24, type: DELIM_START }
+			]}
+		]);
+	});
+
+	test('Tag with Attributes, no quotes', () => {
+		modesUtil.assertTokenization(tokenizationSupport, [{
+			line: '<abc foo=bar bar=help-me>',
+			tokens: [
+				{ startIndex:0, type: DELIM_START },
+				{ startIndex:1, type: getTag('abc') },
+				{ startIndex:4, type: '' },
+				{ startIndex:5, type: ATTRIB_NAME },
+				{ startIndex:8, type: DELIM_ASSIGN },
+				{ startIndex:9, type: ATTRIB_VALUE },
+				{ startIndex:12, type: '' },
+				{ startIndex:13, type: ATTRIB_NAME },
+				{ startIndex:16, type: DELIM_ASSIGN },
+				{ startIndex:17, type: ATTRIB_VALUE },
+				{ startIndex:24, type: DELIM_START }
 			]}
 		]);
 	});
@@ -454,14 +523,14 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo=  "bar">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
 				{ startIndex:8, type: DELIM_ASSIGN },
 				{ startIndex:9, type: '' },
 				{ startIndex:11, type: ATTRIB_VALUE },
-				{ startIndex:16, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:16, type: DELIM_START }
 			]}
 		]);
 	});
@@ -470,7 +539,7 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo = "bar">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
@@ -478,20 +547,20 @@ suite('Colorizing - HTML', () => {
 				{ startIndex:9, type: DELIM_ASSIGN },
 				{ startIndex:10, type: '' },
 				{ startIndex:11, type: ATTRIB_VALUE },
-				{ startIndex:16, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:16, type: DELIM_START }
 			]}
-		])
+		]);
 	});
 
 	test('Tag with Name-Only-Attribute #1', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
-				{ startIndex:8, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:8, type: DELIM_START }
 			]}
 		]);
 	});
@@ -500,29 +569,53 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo bar>',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
 				{ startIndex:8, type: '' },
 				{ startIndex:9, type: ATTRIB_NAME },
-				{ startIndex:12, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:12, type: DELIM_START }
 			]}
 		]);
 	});
 
-	test('Tag with Invalid Attribute Name', () => {
+	test('Tag with Interesting Attribute Name', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo!@#="bar">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
-				{ startIndex:8, type: '' },
-				{ startIndex:13, type: ATTRIB_NAME },
-				{ startIndex:16, type: '' },
-				{ startIndex:17, type: DELIM_START, bracket: Modes.Bracket.Close }
+				{ startIndex:11, type: DELIM_ASSIGN },
+				{ startIndex:12, type: ATTRIB_VALUE },
+				{ startIndex:17, type: DELIM_START }
+			]}
+		]);
+	});
+
+	test('Tag with Angular Attribute Name', () => {
+		modesUtil.assertTokenization(tokenizationSupport, [{
+			line: '<abc #myinput (click)="bar" [value]="someProperty" *ngIf="someCondition">',
+			tokens: [
+				{ startIndex:0, type: DELIM_START },
+				{ startIndex:1, type: getTag('abc') },
+				{ startIndex:4, type: '' },
+				{ startIndex:5, type: ATTRIB_NAME },
+				{ startIndex:13, type: '' },
+				{ startIndex:14, type: ATTRIB_NAME },
+				{ startIndex:21, type: DELIM_ASSIGN },
+				{ startIndex:22, type: ATTRIB_VALUE },
+				{ startIndex:27, type: '' },
+				{ startIndex:28, type: ATTRIB_NAME },
+				{ startIndex:35, type: DELIM_ASSIGN },
+				{ startIndex:36, type: ATTRIB_VALUE },
+				{ startIndex:50, type: '' },
+				{ startIndex:51, type: ATTRIB_NAME },
+				{ startIndex:56, type: DELIM_ASSIGN },
+				{ startIndex:57, type: ATTRIB_VALUE },
+				{ startIndex:72, type: DELIM_START }
 			]}
 		]);
 	});
@@ -531,7 +624,7 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<abc foo=">',
 			tokens: [
-				{ startIndex:0, type: DELIM_START, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_START },
 				{ startIndex:1, type: getTag('abc') },
 				{ startIndex:4, type: '' },
 				{ startIndex:5, type: ATTRIB_NAME },
@@ -545,9 +638,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<!--a-->',
 			tokens: [
-				{ startIndex:0, type: DELIM_COMMENT, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_COMMENT },
 				{ startIndex:4, type: COMMENT },
-				{ startIndex:5, type: DELIM_COMMENT, bracket: Modes.Bracket.Close }
+				{ startIndex:5, type: DELIM_COMMENT }
 			]}
 		]);
 	});
@@ -556,9 +649,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<!--a>foo bar</a -->',
 			tokens: [
-				{ startIndex:0, type: DELIM_COMMENT, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_COMMENT },
 				{ startIndex:4, type: COMMENT },
-				{ startIndex:17, type: DELIM_COMMENT, bracket: Modes.Bracket.Close }
+				{ startIndex:17, type: DELIM_COMMENT }
 			]}
 		]);
 	});
@@ -567,9 +660,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<!--a>\nfoo \nbar</a -->',
 			tokens: [
-				{ startIndex:0, type: DELIM_COMMENT, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_COMMENT },
 				{ startIndex:4, type: COMMENT },
-				{ startIndex:19, type: DELIM_COMMENT, bracket: Modes.Bracket.Close }
+				{ startIndex:19, type: DELIM_COMMENT }
 			]}
 		]);
 	});
@@ -578,9 +671,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<!DOCTYPE a>',
 			tokens: [
-				{ startIndex:0, type: DELIM_DOCTYPE, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_DOCTYPE },
 				{ startIndex:9, type: DOCTYPE },
-				{ startIndex:11, type: DELIM_DOCTYPE, bracket: Modes.Bracket.Close }
+				{ startIndex:11, type: DELIM_DOCTYPE }
 			]}
 		]);
 	});
@@ -589,9 +682,9 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<!doctype a>',
 			tokens: [
-				{ startIndex:0, type: DELIM_DOCTYPE, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_DOCTYPE },
 				{ startIndex:9, type: DOCTYPE },
-				{ startIndex:11, type: DELIM_DOCTYPE, bracket: Modes.Bracket.Close }
+				{ startIndex:11, type: DELIM_DOCTYPE }
 			]}
 		]);
 	});
@@ -600,15 +693,15 @@ suite('Colorizing - HTML', () => {
 		modesUtil.assertTokenization(tokenizationSupport, [{
 			line: '<!DOCTYPE a\n"foo" \'bar\'>',
 			tokens: [
-				{ startIndex:0, type: DELIM_DOCTYPE, bracket: Modes.Bracket.Open },
+				{ startIndex:0, type: DELIM_DOCTYPE },
 				{ startIndex:9, type: DOCTYPE },
-				{ startIndex:23, type: DELIM_DOCTYPE, bracket: Modes.Bracket.Close }
+				{ startIndex:23, type: DELIM_DOCTYPE }
 			]}
 		]);
 	});
 
-	test('onEnter', function() {
-		var model = new Model('<script type=\"text/javascript\">function f() { foo(); }', _mode);
+	test('onEnter 1', function() {
+		var model = new Model('<script type=\"text/javascript\">function f() { foo(); }', Model.DEFAULT_CREATION_OPTIONS, _mode);
 
 		var actual = _mode.richEditSupport.onEnter.onEnter(model, {
 			lineNumber: 1,
@@ -620,10 +713,9 @@ suite('Colorizing - HTML', () => {
 		model.dispose();
 	});
 
-	test('onEnter', function() {
-
+	test('onEnter 2', function() {
 		function onEnter(line:string, offset:number): Modes.IEnterAction {
-			let model = new TextModelWithTokens([], TextModel.toRawText(line), false, _mode);
+			let model = new TextModelWithTokens([], TextModel.toRawText(line, Model.DEFAULT_CREATION_OPTIONS), false, _mode);
 			let result = getRawEnterActionAtPosition(model, 1, offset + 1);
 			model.dispose();
 			return result;
@@ -657,25 +749,23 @@ suite('Colorizing - HTML', () => {
 
 	test('matchBracket', () => {
 
-		function toString(brackets:EditorCommon.IEditorRange[]): string[] {
+		function toString(brackets:[EditorCommon.IEditorRange, EditorCommon.IEditorRange]): [string,string] {
 			if (!brackets) {
 				return null;
 			}
 			brackets.sort(Range.compareRangesUsingStarts);
-			return brackets.map(b => b.toString());
+			return [brackets[0].toString(), brackets[1].toString()];
 		}
 
-		function assertBracket(lines:string[], lineNumber:number, column:number, expected:EditorCommon.IEditorRange[]): void {
-			let model = new TextModelWithTokens([], TextModel.toRawText(lines.join('\n')), false, _mode);
+		function assertBracket(lines:string[], lineNumber:number, column:number, expected:[EditorCommon.IEditorRange, EditorCommon.IEditorRange]): void {
+			let model = new TextModelWithTokens([], TextModel.toRawText(lines.join('\n'), TextModel.DEFAULT_CREATION_OPTIONS), false, _mode);
 			// force tokenization
 			model.getLineContext(model.getLineCount());
 			let actual = model.matchBracket({
 				lineNumber: lineNumber,
 				column: column
 			});
-			let actualStr = actual ? toString(actual.brackets) : null;
-			let expectedStr = toString(expected);
-			assert.deepEqual(actualStr, expectedStr, 'TEXT <<' + lines.join('\n') + '>>, POS: ' + lineNumber + ', ' + column);
+			assert.deepEqual(toString(actual), toString(expected), 'TEXT <<' + lines.join('\n') + '>>, POS: ' + lineNumber + ', ' + column);
 		}
 
 		assertBracket(['<p></p>'], 1, 1, [new Range(1, 1, 1, 2), new Range(1, 3, 1, 4)]);

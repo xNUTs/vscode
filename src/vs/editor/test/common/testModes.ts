@@ -4,12 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import modes = require('vs/editor/common/modes');
-import {AbstractMode} from 'vs/editor/common/modes/abstractMode';
+import * as modes from 'vs/editor/common/modes';
 import {AbstractState} from 'vs/editor/common/modes/abstractState';
-import {AbstractModeWorker} from 'vs/editor/common/modes/abstractModeWorker';
 import {RichEditSupport} from 'vs/editor/common/modes/supports/richEditSupport';
 import {TokenizationSupport} from 'vs/editor/common/modes/supports/tokenizationSupport';
+import {MockMode} from 'vs/editor/test/common/mocks/mockMode';
 
 export class CommentState extends AbstractState {
 
@@ -31,14 +30,13 @@ export class CommentState extends AbstractState {
 	}
 }
 
-export class CommentMode extends AbstractMode<AbstractModeWorker> {
+export class CommentMode extends MockMode {
 
 	public tokenizationSupport: modes.ITokenizationSupport;
 	public richEditSupport: modes.IRichEditSupport;
 
 	constructor(commentsConfig:modes.ICommentsConfiguration) {
-		super({ id: 'tests.commentMode', workerParticipants: [] }, null, null);
-
+		super();
 		this.tokenizationSupport = new TokenizationSupport(this, {
 			getInitialState: () => new CommentState(this, 0)
 		}, false, false);
@@ -49,17 +47,7 @@ export class CommentMode extends AbstractMode<AbstractModeWorker> {
 	}
 }
 
-export class TestingMode implements modes.IMode {
-	public getId():string {
-		return 'testing';
-	}
-
-	public toSimplifiedMode(): modes.IMode {
-		return this;
-	}
-}
-
-export abstract class AbstractIndentingMode extends TestingMode {
+export abstract class AbstractIndentingMode extends MockMode {
 
 	public getElectricCharacters():string[] {
 		return null;
@@ -96,7 +84,7 @@ export class ModelState1 extends AbstractState {
 	}
 }
 
-export class ModelMode1 extends TestingMode {
+export class ModelMode1 extends MockMode {
 	public calledFor:string[];
 
 	public tokenizationSupport: modes.ITokenizationSupport;
@@ -137,7 +125,7 @@ export class ModelState2 extends AbstractState {
 	}
 }
 
-export class ModelMode2 extends TestingMode {
+export class ModelMode2 extends MockMode {
 	public calledFor:any[];
 
 	public tokenizationSupport: modes.ITokenizationSupport;
@@ -151,89 +139,18 @@ export class ModelMode2 extends TestingMode {
 	}
 }
 
-export class BracketState extends AbstractState {
+export class BracketMode extends MockMode {
 
-	private allResults:{
-		[key:string]:modes.ITokenizationResult;
-	};
-
-	constructor(mode:modes.IMode) {
-		super(mode);
-		this.allResults = null;
-	}
-
-	public makeClone():BracketState {
-		return this;
-	}
-
-	public equals(other: modes.IState):boolean {
-		return true;
-	}
-
-	public tokenize(stream:modes.IStream):modes.ITokenizationResult {
-		this.initializeAllResults();
-		stream.setTokenRules('{}[]()', '');
-		var token= stream.nextToken();
-		// Strade compiler bug: can't reference self in Object return creation.
-		var state:modes.IState = this;
-		if (this.allResults.hasOwnProperty(token)) {
-			return this.allResults[token];
-		} else {
-			return {
-				type: '',
-				bracket: modes.Bracket.None,
-				nextState: state
-			};
-		}
-	}
-
-	public initializeAllResults(): void {
-		if (this.allResults !== null) {
-			return;
-		}
-		this.allResults = {};
-		var brackets:any= {
-			'{': '}',
-			'[': ']',
-			'(': ')'
-		};
-
-		var type= 1;
-		var state:modes.IState = this;
-		for (var x in brackets) {
-			this.allResults[x]= {
-				type: 'bracket' + type,
-				bracket: modes.Bracket.Open,
-				nextState: state
-			};
-			this.allResults[brackets[x]] = {
-				type: 'bracket' + type,
-				bracket: modes.Bracket.Close,
-				nextState: state
-			};
-			type++;
-		}
-	}
-}
-
-export class BracketMode extends TestingMode {
-
-	public tokenizationSupport: modes.ITokenizationSupport;
 	public richEditSupport: modes.IRichEditSupport;
 
 	constructor() {
 		super();
-		this.tokenizationSupport = new TokenizationSupport(this, {
-			getInitialState: () => new BracketState(this)
-		}, false, false);
-		this.richEditSupport = new RichEditSupport(this.getId(), {
-			__electricCharacterSupport: {
-				brackets: [
-					{ tokenType: 'asd', open: '{', close: '}', isElectric: true },
-					{ tokenType: 'qwe', open: '[', close: ']', isElectric: true },
-					{ tokenType: 'zxc', open: '(', close: ')', isElectric: true }
-				]
-			}
+		this.richEditSupport = new RichEditSupport(this.getId(), null, {
+			brackets: [
+				['{', '}'],
+				['[', ']'],
+				['(', ')'],
+			]
 		});
 	}
 }
@@ -268,15 +185,15 @@ export class NState extends AbstractState {
 	}
 }
 
-export class NMode extends TestingMode {
+export class NMode extends MockMode {
 
 	private n:number;
 
 	public tokenizationSupport: modes.ITokenizationSupport;
 
 	constructor(n:number) {
-		this.n = n;
 		super();
+		this.n = n;
 		this.tokenizationSupport = new TokenizationSupport(this, {
 			getInitialState: () => new NState(this, this.n)
 		}, false, false);

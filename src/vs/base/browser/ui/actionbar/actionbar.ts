@@ -193,7 +193,7 @@ export class BaseActionItem extends EventEmitter implements IActionItem {
 
 export class Separator extends Action {
 
-	public static ID = 'actions.monaco.separator';
+	public static ID = 'vs.actions.separator';
 
 	constructor(label?: string, order?) {
 		super(Separator.ID, label, label ? 'separator text' : 'separator');
@@ -262,7 +262,7 @@ export class ActionItem extends BaseActionItem {
 			title = this.getAction().label;
 
 			if (this.options.keybinding) {
-				title = nls.localize('titleLabel', "{0} ({1})", title, this.options.keybinding);
+				title = nls.localize({ key: 'titleLabel', comment: ['action title', 'action keybinding']}, "{0} ({1})", title, this.options.keybinding);
 			}
 		}
 
@@ -712,7 +712,7 @@ export class ActionBar extends EventEmitter implements IActionRunner {
 			this.focusTracker = null;
 		}
 
-		this.toDispose = lifecycle.disposeAll(this.toDispose);
+		this.toDispose = lifecycle.dispose(this.toDispose);
 
 		this.getContainer().destroy();
 
@@ -724,7 +724,7 @@ export class SelectActionItem extends BaseActionItem {
 	private select: HTMLSelectElement;
 	private options: string[];
 	private selected: number;
-	private toDispose: lifecycle.IDisposable[];
+	protected toDispose: lifecycle.IDisposable[];
 
 	constructor(ctx: any, action: IAction, options: string[], selected: number) {
 		super(ctx, action);
@@ -749,8 +749,12 @@ export class SelectActionItem extends BaseActionItem {
 
 	private registerListeners(): void {
 		this.toDispose.push(DOM.addStandardDisposableListener(this.select, 'change', (e) => {
-			this.actionRunner.run(this._action, e.target.value).done();
+			this.actionRunner.run(this._action, this.getActionContext(e.target.value)).done();
 		}));
+	}
+
+	protected getActionContext(option: string) {
+		return option;
 	}
 
 	public focus(): void {
@@ -792,7 +796,7 @@ export class SelectActionItem extends BaseActionItem {
 	}
 
 	public dispose(): void {
-		this.toDispose = lifecycle.disposeAll(this.toDispose);
+		this.toDispose = lifecycle.dispose(this.toDispose);
 
 		super.dispose();
 	}

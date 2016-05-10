@@ -8,16 +8,15 @@ import {toErrorMessage, onUnexpectedError} from 'vs/base/common/errors';
 import {IEmitterEvent} from 'vs/base/common/eventEmitter';
 import {IModelService} from 'vs/editor/common/services/modelService';
 import * as EditorCommon from 'vs/editor/common/editorCommon';
-import {IPrefixSumIndexOfResult} from 'vs/editor/common/viewModel/prefixSumComputer';
 import {MirrorModel2} from 'vs/editor/common/model/mirrorModel2';
 import {Remotable, IThreadService} from 'vs/platform/thread/common/thread';
 import Event, {Emitter} from 'vs/base/common/event';
 import URI from 'vs/base/common/uri';
-import {IDisposable, disposeAll} from 'vs/base/common/lifecycle';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import {Range, Position, Disposable} from 'vs/workbench/api/node/extHostTypes';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
-import {EventType as FileEventType, LocalFileChangeEvent, ITextFileService} from 'vs/workbench/parts/files/common/files';
+import {EventType as FileEventType, TextFileChangeEvent, ITextFileService} from 'vs/workbench/parts/files/common/files';
 import * as TypeConverters from './extHostTypeConverters';
 import {TPromise} from 'vs/base/common/winjs.base';
 import * as vscode from 'vscode';
@@ -27,7 +26,6 @@ import {IModeService} from 'vs/editor/common/services/modeService';
 import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
 import {ResourceEditorInput} from 'vs/workbench/common/editor/resourceEditorInput';
 import {asWinJsPromise} from 'vs/base/common/async';
-import * as weak from 'weak';
 
 export interface IModelAddedData {
 	url: URI;
@@ -49,7 +47,7 @@ export function getWordDefinitionFor(modeId: string): RegExp {
 	return _modeId2WordDefinition[modeId];
 }
 
-@Remotable.PluginHostContext('ExtHostModelService')
+@Remotable.ExtHostContext('ExtHostModelService')
 export class ExtHostModelService {
 
 	private static _handlePool: number = 0;
@@ -171,14 +169,6 @@ export class ExtHostModelService {
 		return asWinJsPromise(token => provider.provideTextDocumentContent(uri, token));
 	}
 
-	$isDocumentReferenced(uri: URI): TPromise<boolean> {
-		const key = uri.toString();
-		const document = this._documentData[key];
-		if (document) {
-			return TPromise.as(document.isDocumentReferenced);
-		}
-	}
-
 	public _acceptModelAdd(initData: IModelAddedData): void {
 		let data = new ExtHostDocumentData(this._proxy, initData.url, initData.value.lines, initData.value.EOL, initData.modeId, initData.versionId, initData.isDirty);
 		let key = data.document.uri.toString();
@@ -247,7 +237,7 @@ export class ExtHostDocumentData extends MirrorModel2 {
 	private _languageId: string;
 	private _isDirty: boolean;
 	private _textLines: vscode.TextLine[];
-	private _documentRef: weak.WeakRef & vscode.TextDocument;
+	private _document: vscode.TextDocument;
 
 	constructor(proxy: MainThreadDocuments, uri: URI, lines: string[], eol: string,
 		languageId: string, versionId: number, isDirty: boolean) {
@@ -266,13 +256,9 @@ export class ExtHostDocumentData extends MirrorModel2 {
 	}
 
 	get document(): vscode.TextDocument {
-		// dereferences or creates the actual document for this
-		// document data. keeps a weak reference only such that
-		// we later when a document isn't needed anymore
-
-		if (!this.isDocumentReferenced) {
+		if (!this._document) {
 			const data = this;
-			const doc = {
+			this._document = {
 				get uri() { return data._uri; },
 				get fileName() { return data._uri.fsPath; },
 				get isUntitled() { return data._uri.scheme !== 'file'; },
@@ -289,13 +275,8 @@ export class ExtHostDocumentData extends MirrorModel2 {
 				validatePosition(pos) { return data.validatePosition(pos); },
 				getWordRangeAtPosition(pos) { return data.getWordRangeAtPosition(pos); }
 			};
-			this._documentRef = weak(doc);
 		}
-		return weak.get(this._documentRef);
-	}
-
-	get isDocumentReferenced(): boolean {
-		return this._documentRef && !weak.isDead(this._documentRef);
+		return this._document;
 	}
 
 	_acceptLanguageId(newLanguageId: string): void {
@@ -341,7 +322,7 @@ export class ExtHostDocumentData extends MirrorModel2 {
 		}
 
 		if (line < 0 || line >= this._lines.length) {
-			throw new Error('Illegal value ' + line + ' for `line`');
+			throw new Error('Illegal value for `line`');
 		}
 
 		let result = this._textLines[line];
@@ -350,14 +331,16 @@ export class ExtHostDocumentData extends MirrorModel2 {
 			const text = this._lines[line];
 			const firstNonWhitespaceCharacterIndex = /^(\s*)/.exec(text)[1].length;
 			const range = new Range(line, 0, line, text.length);
-			const rangeIncludingLineBreak = new Range(line, 0, line + 1, 0);
+			const rangeIncludingLineBreak = line < this._lines.length - 1
+				? new Range(line, 0, line + 1, 0)
+				: range;
 
 			result = Object.freeze({
 				lineNumber: line,
 				range,
 				rangeIncludingLineBreak,
 				text,
-				firstNonWhitespaceCharacterIndex,
+				firstNonWhitespaceCharacterIndex, //TODO@api, rename to 'leadingWhitespaceLength'
 				isEmptyOrWhitespace: firstNonWhitespaceCharacterIndex === text.length
 			});
 
@@ -378,8 +361,7 @@ export class ExtHostDocumentData extends MirrorModel2 {
 		offset = Math.max(0, offset);
 
 		this._ensureLineStarts();
-		let out: IPrefixSumIndexOfResult = { index: 0, remainder: 0 };
-		this._lineStarts.getIndexOf(offset, out);
+		let out = this._lineStarts.getIndexOf(offset);
 
 		let lineLength = this._lines[out.index].length;
 
@@ -413,23 +395,24 @@ export class ExtHostDocumentData extends MirrorModel2 {
 
 		if (line < 0) {
 			line = 0;
-			hasChanged = true;
-		}
-
-		if (line >= this._lines.length) {
-			line = this._lines.length - 1;
-			hasChanged = true;
-		}
-
-		if (character < 0) {
 			character = 0;
 			hasChanged = true;
 		}
-
-		let maxCharacter = this._lines[line].length;
-		if (character > maxCharacter) {
-			character = maxCharacter;
+		else if (line >= this._lines.length) {
+			line = this._lines.length - 1;
+			character = this._lines[line].length;
 			hasChanged = true;
+		}
+		else {
+			let maxCharacter = this._lines[line].length;
+			if (character < 0) {
+				character = 0;
+				hasChanged = true;
+			}
+			else if (character > maxCharacter) {
+				character = maxCharacter;
+				hasChanged = true;
+			}
 		}
 
 		if (!hasChanged) {
@@ -493,17 +476,23 @@ export class MainThreadDocuments {
 		modelService.onModelRemoved(this._onModelRemoved, this, this._toDispose);
 		modelService.onModelModeChanged(this._onModelModeChanged, this, this._toDispose);
 
-		this._toDispose.push(eventService.addListener2(FileEventType.FILE_SAVED, (e: LocalFileChangeEvent) => {
-			this._proxy._acceptModelSaved(e.getAfter().resource.toString());
+		this._toDispose.push(eventService.addListener2(FileEventType.FILE_SAVED, (e: TextFileChangeEvent) => {
+			if (this._shouldHandleFileEvent(e)) {
+				this._proxy._acceptModelSaved(e.resource.toString());
+			}
 		}));
-		this._toDispose.push(eventService.addListener2(FileEventType.FILE_REVERTED, (e: LocalFileChangeEvent) => {
-			this._proxy._acceptModelReverted(e.getAfter().resource.toString());
+		this._toDispose.push(eventService.addListener2(FileEventType.FILE_REVERTED, (e: TextFileChangeEvent) => {
+			if (this._shouldHandleFileEvent(e)) {
+				this._proxy._acceptModelReverted(e.resource.toString());
+			}
 		}));
-		this._toDispose.push(eventService.addListener2(FileEventType.FILE_DIRTY, (e: LocalFileChangeEvent) => {
-			this._proxy._acceptModelDirty(e.getAfter().resource.toString());
+		this._toDispose.push(eventService.addListener2(FileEventType.FILE_DIRTY, (e: TextFileChangeEvent) => {
+			if (this._shouldHandleFileEvent(e)) {
+				this._proxy._acceptModelDirty(e.resource.toString());
+			}
 		}));
 
-		const handle = setInterval(() => this._runDocumentCleanup(), 30 * 1000);
+		const handle = setInterval(() => this._runDocumentCleanup(), 1000 * 60 * 3);
 		this._toDispose.push({ dispose() { clearInterval(handle); } });
 
 		this._modelToDisposeMap = Object.create(null);
@@ -516,7 +505,12 @@ export class MainThreadDocuments {
 			this._modelToDisposeMap[modelUrl].dispose();
 		});
 		this._modelToDisposeMap = Object.create(null);
-		this._toDispose = disposeAll(this._toDispose);
+		this._toDispose = dispose(this._toDispose);
+	}
+
+	private _shouldHandleFileEvent(e: TextFileChangeEvent): boolean {
+		const model = this._modelService.getModel(e.resource);
+		return model && !model.isTooLargeForHavingARichMode();
 	}
 
 	private _onModelAdded(model: EditorCommon.IModel): void {
@@ -572,7 +566,7 @@ export class MainThreadDocuments {
 		}
 	}
 
-	// --- from plugin host process
+	// --- from extension host process
 
 	_trySaveDocument(uri: URI): TPromise<boolean> {
 		return this._textFileService.save(uri);
@@ -621,6 +615,9 @@ export class MainThreadDocuments {
 				if (input.getResource().toString() !== uri.toString()) {
 					throw new Error(`expected URI ${uri.toString() } BUT GOT ${input.getResource().toString() }`);
 				}
+				if (!this._modelIsSynced[uri.toString()]) {
+					throw new Error(`expected URI ${uri.toString()} to have come to LIFE`);
+				}
 				return this._proxy._acceptModelDirty(uri.toString()); // mark as dirty
 			}).then(() => {
 				return true;
@@ -666,13 +663,9 @@ export class MainThreadDocuments {
 
 		TPromise.join(Object.keys(this._virtualDocumentSet).map(key => {
 			let resource = URI.parse(key);
-			return this._proxy.$isDocumentReferenced(resource).then(referenced => {
-				if (!referenced) {
-					return this._editorService.inputToType({ resource }).then(input => {
-						if (!this._editorService.isVisible(input, true)) {
-							toBeDisposed.push(resource);
-						}
-					});
+			return this._editorService.inputToType({ resource }).then(input => {
+				if (!this._editorService.isVisible(input, true)) {
+					toBeDisposed.push(resource);
 				}
 			});
 		})).then(() => {

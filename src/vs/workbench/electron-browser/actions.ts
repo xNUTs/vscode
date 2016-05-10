@@ -16,10 +16,14 @@ import {IMessageService, Severity} from 'vs/platform/message/common/message';
 import {IWindowConfiguration} from 'vs/workbench/electron-browser/window';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 import {IQuickOpenService} from 'vs/workbench/services/quickopen/common/quickOpenService';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
+import {KeybindingsRegistry} from 'vs/platform/keybinding/common/keybindingsRegistry';
+import {ServicesAccessor} from 'vs/platform/instantiation/common/instantiation';
+import * as browser from 'vs/base/browser/browser';
 
 import {ipcRenderer as ipc, webFrame, remote} from 'electron';
+
+// --- actions
 
 export class CloseEditorAction extends Action {
 
@@ -146,12 +150,12 @@ export class ToggleDevToolsAction extends Action {
 	public static ID = 'workbench.action.toggleDevTools';
 	public static LABEL = nls.localize('toggleDevTools', "Toggle Developer Tools");
 
-	constructor(id: string, label: string, @INullService ns) {
+	constructor(id: string, label: string, @IWindowService private windowService: IWindowService) {
 		super(id, label);
 	}
 
 	public run(): TPromise<boolean> {
-		remote.getCurrentWindow().webContents.toggleDevTools();
+		ipc.send('vscode:toggleDevTools', this.windowService.getWindowId());
 
 		return TPromise.as(true);
 	}
@@ -162,18 +166,42 @@ export class ZoomInAction extends Action {
 	public static ID = 'workbench.action.zoomIn';
 	public static LABEL = nls.localize('zoomIn', "Zoom in");
 
-	constructor(id: string, label: string, @INullService ns) {
+	constructor(id: string, label: string) {
 		super(id, label);
 	}
 
 	public run(): TPromise<boolean> {
 		webFrame.setZoomLevel(webFrame.getZoomLevel() + 1);
+		browser.setZoomLevel(webFrame.getZoomLevel()); // Ensure others can listen to zoom level changes
 
 		return TPromise.as(true);
 	}
 }
 
-export abstract class BaseZoomAction extends Action {
+export class ZoomOutAction extends Action {
+
+	public static ID = 'workbench.action.zoomOut';
+	public static LABEL = nls.localize('zoomOut', "Zoom out");
+
+	constructor(
+		id: string,
+		label: string
+	) {
+		super(id, label);
+	}
+
+	public run(): TPromise<boolean> {
+		webFrame.setZoomLevel(webFrame.getZoomLevel() - 1);
+		browser.setZoomLevel(webFrame.getZoomLevel()); // Ensure others can listen to zoom level changes
+
+		return TPromise.as(true);
+	}
+}
+
+export class ZoomResetAction extends Action {
+
+	public static ID = 'workbench.action.zoomReset';
+	public static LABEL = nls.localize('zoomReset', "Reset Zoom");
 
 	constructor(
 		id: string,
@@ -184,66 +212,20 @@ export abstract class BaseZoomAction extends Action {
 	}
 
 	public run(): TPromise<boolean> {
-		return TPromise.as(false); // Subclass to implement
+		const level = this.getConfiguredZoomLevel();
+		webFrame.setZoomLevel(level);
+		browser.setZoomLevel(webFrame.getZoomLevel()); // Ensure others can listen to zoom level changes
+
+		return TPromise.as(true);
 	}
 
-	protected loadConfiguredZoomLevel(): TPromise<number> {
-		return this.configurationService.loadConfiguration().then((windowConfig: IWindowConfiguration) => {
-			if (windowConfig.window && typeof windowConfig.window.zoomLevel === 'number') {
-				return windowConfig.window.zoomLevel;
-			}
+	private getConfiguredZoomLevel(): number {
+		const windowConfig = this.configurationService.getConfiguration<IWindowConfiguration>();
+		if (windowConfig.window && typeof windowConfig.window.zoomLevel === 'number') {
+			return windowConfig.window.zoomLevel;
+		}
 
-			return 0; // default
-		});
-	}
-}
-
-export class ZoomOutAction extends BaseZoomAction {
-
-	public static ID = 'workbench.action.zoomOut';
-	public static LABEL = nls.localize('zoomOut', "Zoom out");
-
-	constructor(
-		id: string,
-		label: string,
-		@IConfigurationService configurationService: IConfigurationService
-	) {
-		super(id, label, configurationService);
-	}
-
-	public run(): TPromise<boolean> {
-		return this.loadConfiguredZoomLevel().then(level => {
-			let newZoomLevelCandiate = webFrame.getZoomLevel() - 1;
-			if (newZoomLevelCandiate < 0 && newZoomLevelCandiate < level) {
-				newZoomLevelCandiate = Math.min(level, 0); // do not zoom below configured level or below 0
-			}
-
-			webFrame.setZoomLevel(newZoomLevelCandiate);
-
-			return true;
-		});
-	}
-}
-
-export class ZoomResetAction extends BaseZoomAction {
-
-	public static ID = 'workbench.action.zoomReset';
-	public static LABEL = nls.localize('zoomReset', "Reset Zoom");
-
-	constructor(
-		id: string,
-		label: string,
-		@IConfigurationService configurationService: IConfigurationService
-	) {
-		super(id, label, configurationService);
-	}
-
-	public run(): TPromise<boolean> {
-		return this.loadConfiguredZoomLevel().then(level => {
-			webFrame.setZoomLevel(level);
-
-			return true;
-		});
+		return 0; // default
 	}
 }
 
@@ -397,17 +379,30 @@ export class OpenRecentAction extends Action {
 	}
 
 	public run(): TPromise<boolean> {
-		let picks = this.contextService.getConfiguration().env.recentPaths.map(p => {
+		const recentFolders = this.contextService.getConfiguration().env.recentFolders;
+		const recentFiles = this.contextService.getConfiguration().env.recentFiles;
+
+		let folderPicks = recentFolders.map((p, index) => {
 			return {
 				label: paths.basename(p),
 				description: paths.dirname(p),
-				path: p
+				path: p,
+				separator: index === 0 ? { label: nls.localize('folders', "folders") } : void 0
+			};
+		});
+
+		let filePicks = recentFiles.map((p, index) => {
+			return {
+				label: paths.basename(p),
+				description: paths.dirname(p),
+				path: p,
+				separator: index === 0 ? { label: nls.localize('files', "files"), border: true } : void 0
 			};
 		});
 
 		const hasWorkspace = !!this.contextService.getWorkspace();
 
-		return this.quickOpenService.pick(picks, {
+		return this.quickOpenService.pick(folderPicks.concat(...filePicks), {
 			autoFocus: { autoFocusFirstEntry: !hasWorkspace, autoFocusSecondEntry: hasWorkspace },
 			placeHolder: nls.localize('openRecentPlaceHolder', "Select a path to open"),
 			matchOnDescription: true
@@ -449,3 +444,19 @@ export class CloseMessagesAction extends Action {
 		return TPromise.as(true);
 	}
 }
+
+// --- commands
+
+KeybindingsRegistry.registerCommandDesc({
+	id: '_workbench.ipc',
+	weight: KeybindingsRegistry.WEIGHT.workbenchContrib(0),
+	handler(accessor: ServicesAccessor, ipcMessage: string, ipcArgs: any[]) {
+		if (ipcMessage && Array.isArray(ipcArgs)) {
+			ipc.send(ipcMessage, ...ipcArgs);
+		} else {
+			ipc.send(ipcMessage);
+		}
+	},
+	when: undefined,
+	primary: undefined
+});

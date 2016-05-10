@@ -36,8 +36,10 @@ import {Position, POSITIONS} from 'vs/platform/editor/common/editor';
 import {IStorageService} from 'vs/platform/storage/common/storage';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
+import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
 import {IMessageService, IMessageWithAction, Severity} from 'vs/platform/message/common/message';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
+import {IProgressService} from 'vs/platform/progress/common/progress';
 
 const EDITOR_STATE_STORAGE_KEY = 'editorpart.editorState';
 
@@ -62,7 +64,6 @@ interface IEditorState {
  * editor for the given input to show the contents. The editor part supports up to 3 side-by-side editors.
  */
 export class EditorPart extends Part implements IEditorPart {
-	private instantiationService: IInstantiationService;
 	private dimension: Dimension;
 	private sideBySideControl: SideBySideEditorControl;
 	private memento: any;
@@ -83,12 +84,13 @@ export class EditorPart extends Part implements IEditorPart {
 	private pendingEditorInputCloseTimeout: number;
 
 	constructor(
-		private messageService: IMessageService,
-		private eventService: IEventService,
-		private telemetryService: ITelemetryService,
-		private storageService: IStorageService,
-		private partService: IPartService,
-		id: string
+		id: string,
+		@IMessageService private messageService: IMessageService,
+		@IEventService private eventService: IEventService,
+		@ITelemetryService private telemetryService: ITelemetryService,
+		@IStorageService private storageService: IStorageService,
+		@IPartService private partService: IPartService,
+		@IInstantiationService private instantiationService: IInstantiationService
 	) {
 		super(id);
 
@@ -118,10 +120,6 @@ export class EditorPart extends Part implements IEditorPart {
 		this.pendingEditorInputCloseTimeout = null;
 	}
 
-	public setInstantiationService(service: IInstantiationService): void {
-		this.instantiationService = service;
-	}
-
 	private createPositionArray(multiArray: boolean): any[] {
 		let array: any[] = [];
 
@@ -133,12 +131,20 @@ export class EditorPart extends Part implements IEditorPart {
 	}
 
 	public getActiveEditorInput(): EditorInput {
+		if (!this.sideBySideControl) {
+			return null; // too early
+		}
+
 		let lastActiveEditor = this.sideBySideControl.getActiveEditor();
 
 		return lastActiveEditor ? lastActiveEditor.input : null;
 	}
 
 	public getActiveEditor(): BaseEditor {
+		if (!this.sideBySideControl) {
+			return null; // too early
+		}
+
 		return this.sideBySideControl.getActiveEditor();
 	}
 
@@ -755,11 +761,8 @@ export class EditorPart extends Part implements IEditorPart {
 	}
 
 	private createEditor(editorDescriptor: EditorDescriptor, editorDomNode: HTMLElement, position: Position): TPromise<BaseEditor> {
-		let services = {
-			progressService: new WorkbenchProgressService(this.eventService, this.sideBySideControl.getProgressBar(position), editorDescriptor.getId(), true)
-		};
-
-		let editorInstantiationService = this.instantiationService.createChild(services);
+		let progressService = new WorkbenchProgressService(this.eventService, this.sideBySideControl.getProgressBar(position), editorDescriptor.getId(), true);
+		let editorInstantiationService = this.instantiationService.createChild(new ServiceCollection([IProgressService, progressService]));
 
 		return editorInstantiationService.createInstance(editorDescriptor);
 	}

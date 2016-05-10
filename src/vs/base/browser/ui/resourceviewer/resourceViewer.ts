@@ -12,7 +12,7 @@ import URI from 'vs/base/common/uri';
 import paths = require('vs/base/common/paths');
 import {Builder, $} from 'vs/base/browser/builder';
 import DOM = require('vs/base/browser/dom');
-import {IScrollableElement} from 'vs/base/browser/ui/scrollbar/scrollableElement';
+import {DomScrollableElement} from 'vs/base/browser/ui/scrollbar/scrollableElement';
 
 // Known media mimes that we can handle
 const mapExtToMediaMimes = {
@@ -69,7 +69,7 @@ const mapExtToMediaMimes = {
  */
 export class ResourceViewer {
 
-	public static show(name: string, resource: URI, container: Builder, scrollbar?: IScrollableElement): void {
+	public static show(name: string, resource: URI, container: Builder, scrollbar?: DomScrollableElement): void {
 
 		// Ensure CSS class
 		$(container).addClass('monaco-resource-viewer');
@@ -94,7 +94,7 @@ export class ResourceViewer {
 					src: resource.toString() + '?' + new Date().getTime() // We really want to avoid the browser from caching this resource, so we add a fake query param that is unique
 				}).on(DOM.EventType.LOAD, () => {
 					if (scrollbar) {
-						scrollbar.onElementInternalDimensions();
+						scrollbar.scanDomNode();
 					}
 				});
 		}
@@ -125,7 +125,7 @@ export class ResourceViewer {
 					controls: 'controls'
 				}).on(DOM.EventType.LOAD, () => {
 					if (scrollbar) {
-						scrollbar.onElementInternalDimensions();
+						scrollbar.scanDomNode();
 					}
 				});
 		}
@@ -142,7 +142,7 @@ export class ResourceViewer {
 					controls: 'controls'
 				}).on(DOM.EventType.LOAD, () => {
 					if (scrollbar) {
-						scrollbar.onElementInternalDimensions();
+						scrollbar.scanDomNode();
 					}
 				});
 		}
@@ -157,7 +157,7 @@ export class ResourceViewer {
 				});
 
 			if (scrollbar) {
-				scrollbar.onElementInternalDimensions();
+				scrollbar.scanDomNode();
 			}
 		}
 	}

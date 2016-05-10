@@ -4,24 +4,29 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import EditorBrowser = require('vs/editor/browser/editorBrowser');
-import EditorCommon = require('vs/editor/common/editorCommon');
-import {Position} from 'vs/editor/common/core/position';
+import {CommonKeybindings} from 'vs/base/common/keyCodes';
+import {IKeyboardEvent} from 'vs/base/browser/keyboardEvent';
 import {StyleMutator} from 'vs/base/browser/styleMutator';
+import {Position} from 'vs/editor/common/core/position';
+import {IEditorPosition, IPosition, EventType, IConfigurationChangedEvent} from 'vs/editor/common/editorCommon';
+import * as editorBrowser from 'vs/editor/browser/editorBrowser';
+import {Widget} from 'vs/base/browser/ui/widget';
 
-export class ContentHoverWidget implements EditorBrowser.IContentWidget {
+export class ContentHoverWidget extends Widget implements editorBrowser.IContentWidget {
 
 	private _id: string;
-	_editor: EditorBrowser.ICodeEditor;
-	_isVisible: boolean;
+	protected _editor: editorBrowser.ICodeEditor;
+	protected _isVisible: boolean;
 	private _containerDomNode: HTMLElement;
-	_domNode: HTMLElement;
-	_showAtPosition: EditorCommon.IEditorPosition;
+	protected _domNode: HTMLElement;
+	protected _showAtPosition: IEditorPosition;
+	private _stoleFocus: boolean;
 
 	// Editor.IContentWidget.allowEditorOverflow
 	public allowEditorOverflow = true;
 
-	constructor(id: string, editor: EditorBrowser.ICodeEditor) {
+	constructor(id: string, editor: editorBrowser.ICodeEditor) {
+		super();
 		this._id = id;
 		this._editor = editor;
 		this._isVisible = false;
@@ -32,6 +37,19 @@ export class ContentHoverWidget implements EditorBrowser.IContentWidget {
 		this._domNode = document.createElement('div');
 		this._domNode.style.display = 'inline-block';
 		this._containerDomNode.appendChild(this._domNode);
+		this._containerDomNode.tabIndex = 0;
+		this.onkeydown(this._containerDomNode, (e: IKeyboardEvent) => {
+			if (e.equals(CommonKeybindings.ESCAPE)) {
+				this.hide();
+			}
+		});
+
+		this._editor.applyFontInfo(this._domNode);
+		this._register(this._editor.addListener2(EventType.ConfigurationChanged, (e:IConfigurationChangedEvent) => {
+			if (e.fontInfo) {
+				this._editor.applyFontInfo(this._domNode);
+			}
+		}));
 
 		this._editor.addContentWidget(this);
 		this._showAtPosition = null;
@@ -45,7 +63,7 @@ export class ContentHoverWidget implements EditorBrowser.IContentWidget {
 		return this._containerDomNode;
 	}
 
-	public showAt(position:EditorCommon.IPosition): void {
+	public showAt(position:IPosition, focus: boolean): void {
 
 		// Position has changed
 		this._showAtPosition = new Position(position.lineNumber, position.column);
@@ -67,6 +85,10 @@ export class ContentHoverWidget implements EditorBrowser.IContentWidget {
 		// Simply force a synchronous render on the editor
 		// such that the widget does not really render with left = '0px'
 		this._editor.render();
+		this._stoleFocus = focus;
+		if (focus) {
+			this._containerDomNode.focus();
+		}
 	}
 
 	public hide(): void {
@@ -75,15 +97,18 @@ export class ContentHoverWidget implements EditorBrowser.IContentWidget {
 		}
 		this._isVisible = false;
 		this._editor.layoutContentWidget(this);
+		if (this._stoleFocus) {
+			this._editor.focus();
+		}
 	}
 
-	public getPosition():EditorBrowser.IContentWidgetPosition {
+	public getPosition():editorBrowser.IContentWidgetPosition {
 		if (this._isVisible) {
 			return {
 				position: this._showAtPosition,
 				preference: [
-					EditorBrowser.ContentWidgetPositionPreference.ABOVE,
-					EditorBrowser.ContentWidgetPositionPreference.BELOW
+					editorBrowser.ContentWidgetPositionPreference.ABOVE,
+					editorBrowser.ContentWidgetPositionPreference.BELOW
 				]
 			};
 		}
@@ -91,20 +116,21 @@ export class ContentHoverWidget implements EditorBrowser.IContentWidget {
 	}
 
 	public dispose(): void {
-		this.hide();
+		this._editor.removeContentWidget(this);
+		super.dispose();
 	}
 }
 
-export class GlyphHoverWidget implements EditorBrowser.IOverlayWidget {
+export class GlyphHoverWidget extends Widget implements editorBrowser.IOverlayWidget {
 
 	private _id: string;
-	_editor: EditorBrowser.ICodeEditor;
-	_isVisible: boolean;
-	_domNode: HTMLElement;
-	_showAtLineNumber: number;
+	protected _editor: editorBrowser.ICodeEditor;
+	protected _isVisible: boolean;
+	protected _domNode: HTMLElement;
+	protected _showAtLineNumber: number;
 
-	constructor(id: string, editor: EditorBrowser.ICodeEditor) {
-
+	constructor(id: string, editor: editorBrowser.ICodeEditor) {
+		super();
 		this._id = id;
 		this._editor = editor;
 		this._isVisible = false;
@@ -116,6 +142,14 @@ export class GlyphHoverWidget implements EditorBrowser.IOverlayWidget {
 		this._domNode.setAttribute('role', 'presentation');
 
 		this._showAtLineNumber = -1;
+
+		this._editor.applyFontInfo(this._domNode);
+		this._register(this._editor.addListener2(EventType.ConfigurationChanged, (e:IConfigurationChangedEvent) => {
+			if (e.fontInfo) {
+				this._editor.applyFontInfo(this._domNode);
+			}
+		}));
+
 		this._editor.addOverlayWidget(this);
 	}
 
@@ -151,11 +185,12 @@ export class GlyphHoverWidget implements EditorBrowser.IOverlayWidget {
 		this._domNode.style.display = 'none';
 	}
 
-	public getPosition():EditorBrowser.IOverlayWidgetPosition {
+	public getPosition():editorBrowser.IOverlayWidgetPosition {
 		return null;
 	}
 
 	public dispose(): void {
-		this.hide();
+		this._editor.removeOverlayWidget(this);
+		super.dispose();
 	}
 }
